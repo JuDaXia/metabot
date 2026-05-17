@@ -267,6 +267,41 @@ MEMORY_INSTANCE_TOKEN=instance-scoped-token
 >
 > 这是在中心化架构（Phase 2–3）落地前，对 P2P 联邦更安全的默认值——避免新文件夹一旦创建就立刻对全网内其他 MetaBot 可见。
 
+### 迁移到中心服务器（Phase 3）
+
+把本地 SQLite（MetaMemory + Skill Hub）一次性上传到一台中心 MetaBot 服务器：
+
+```bash
+# 1) 先 dry-run 看会上传什么（默认就是 dry-run，不会真的 POST）
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main
+
+# 2) 确认无误，加 --apply 真上传
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main \
+  --apply --continue-on-error
+```
+
+命名空间映射规则（本地 → 中心）：
+
+| 本地 | 中心 |
+|---|---|
+| `/projects/<X>` | `/users/<bot-name>/projects/<X>` |
+| `/instances/<id>/...` | `/users/<bot-name>/private/...` |
+| `/shared/...` | `/shared/...` |
+| `/users/<别人>/...` | 跳过（不是我们的，不上传） |
+
+特性：
+
+- **幂等**：每次跑都先 `GET` 中心确认存在性 + 内容 hash 比较，已存在的不会重复上传
+- **可中断**：失败时默认会终止；`--continue-on-error` 让 4xx/5xx 不阻断整批
+- **本地数据保留**：上传成功的行只在本地 SQLite 加 `migrated_at` 时间戳，原数据不删除，可作 fallback
+- **可选范围**：`--include memory` 或 `--include skills` 单独跑一边
+
 ### 定时任务（Claude Code 原生）
 
 直接用 CC 内置的 `CronCreate` 和 `/loop`，会话内即开即用：
