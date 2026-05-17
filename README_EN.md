@@ -243,6 +243,41 @@ Search MetaMemory for our API design conventions.
 >
 > This is the safer default in the P2P-federation era while the centralized architecture (Phase 2–3) is being built — new folders no longer become visible to every MetaBot on the LAN the instant they're created.
 
+### Migrating to central (Phase 3)
+
+One-shot upload of this bot's local SQLite stores (MetaMemory + Skill Hub) to a central MetaBot server:
+
+```bash
+# 1) Dry-run first — see what would be uploaded (this is the default; no POSTs happen)
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main
+
+# 2) Once it looks right, add --apply to actually upload
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main \
+  --apply --continue-on-error
+```
+
+Namespace mapping (local → central):
+
+| Local | Central |
+|---|---|
+| `/projects/<X>` | `/users/<bot-name>/projects/<X>` |
+| `/instances/<id>/...` | `/users/<bot-name>/private/...` |
+| `/shared/...` | `/shared/...` |
+| `/users/<other>/...` | Skipped (not ours to migrate) |
+
+Highlights:
+
+- **Idempotent**: every row is `GET`-checked first and content-hashed before being POSTed, so re-runs upload nothing new.
+- **Resumable**: by default the run aborts on the first 4xx/5xx; pass `--continue-on-error` to keep going and report failures at the end.
+- **Local data is preserved**: migrated rows get a `migrated_at` timestamp on the local SQLite (additive schema migration). Nothing is deleted, so the local copy remains as a fallback.
+- **Selective**: `--include memory` or `--include skills` to run only one side.
+
 ### Scheduling (Claude Code native)
 
 Use CC's built-in `CronCreate` and `/loop` — zero setup, runs inside the session:
