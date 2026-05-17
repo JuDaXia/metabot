@@ -5,6 +5,7 @@ import * as url from 'node:url';
 import type { Logger } from '../utils/logger.js';
 import { MemoryStorage } from './memory-storage.js';
 import type { MemoryAccess } from './memory-storage.js';
+import { AuditLog, createDefaultAuditLog, type AuditOp } from '../observability/audit-log.js';
 import {
   handleGetFolders,
   handleCreateFolder,
@@ -47,7 +48,35 @@ export interface MemoryServerOptions {
    * visibility, no grants are written.
    */
   peerTokenLookup?: PeerTokenLookup;
+  /**
+   * Optional audit log to record every /api/* request (op, path, principal,
+   * source IP, status, latency). When omitted, the server builds one with
+   * METABOT_AUDIT_DIR / METABOT_AUDIT_ENABLED defaults.
+   */
+  auditLog?: AuditLog;
   logger: Logger;
+}
+
+function deriveOp(method: string, pathname: string): AuditOp | string {
+  if (pathname === '/api/search') return 'search';
+  if (pathname.startsWith('/api/folders') || pathname.startsWith('/api/documents')) {
+    if (method === 'POST') return 'create';
+    if (method === 'PUT') return 'update';
+    if (method === 'DELETE') return 'delete';
+    if (method === 'GET') {
+      const isCollection = pathname === '/api/documents'
+        || pathname === '/api/folders'
+        || pathname === '/api/documents/by-path';
+      return isCollection ? 'list' : 'read';
+    }
+  }
+  return method.toLowerCase();
+}
+
+function derivePrincipalId(access: MemoryAccess): string {
+  if (typeof access === 'string') return access;
+  if (access.instanceId) return access.instanceId;
+  return access.role;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -132,9 +161,10 @@ function resolveStaticDir(): string {
   return srcStatic; // fallback
 }
 
-export function startMemoryServer(options: MemoryServerOptions): { server: http.Server; storage: MemoryStorage } {
+export function startMemoryServer(options: MemoryServerOptions): { server: http.Server; storage: MemoryStorage; auditLog: AuditLog } {
   const { port, databaseDir, secret, adminToken, readerToken, instanceToken, instanceId, memoryNamespace, memoryNamespaces, peerTokenLookup, logger } = options;
   const storage = new MemoryStorage(databaseDir, logger);
+  const auditLog = options.auditLog ?? createDefaultAuditLog(logger);
   const staticDir = resolveStaticDir();
   const writableNamespaces = memoryNamespaces?.length
     ? memoryNamespaces
@@ -194,6 +224,29 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
     const pathname = parsed.pathname;
     const query = parsed.searchParams;
 
+    // Audit instrumentation — fires once on response finish for any /api/*
+    // request. principalId is filled in once access is resolved; if the
+    // request short-circuits (401, 405, unauth) it stays 'anonymous'.
+    const auditStart = Date.now();
+    let auditPrincipalId = 'anonymous';
+    if (pathname.startsWith('/api/')) {
+      res.on('finish', () => {
+        try {
+          auditLog.append({
+            ts: new Date().toISOString(),
+            op: deriveOp(method, pathname),
+            path: pathname,
+            principalId: auditPrincipalId,
+            sourceIp: req.socket.remoteAddress || 'unknown',
+            status: res.statusCode,
+            latencyMs: Date.now() - auditStart,
+          });
+        } catch {
+          // Audit must never break the request path
+        }
+      });
+    }
+
     // CORS preflight
     if (method === 'OPTIONS') {
       res.writeHead(204, {
@@ -224,6 +277,7 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
           return;
         }
         role = resolved;
+        auditPrincipalId = derivePrincipalId(role);
       }
 
       // Folders
@@ -363,5 +417,5 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
     }
   });
 
-  return { server, storage };
+  return { server, storage, auditLog };
 }

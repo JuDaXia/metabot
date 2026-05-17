@@ -5,6 +5,37 @@ import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
 import type { Visibility } from '../skill-hub-store.js';
 import { installSkillFromHub } from '../skills-installer.js';
+import type { AuditOp } from '../../observability/audit-log.js';
+
+function deriveSkillOp(method: string, url: string): AuditOp | string {
+  if (method === 'DELETE') return 'delete';
+  if (method === 'POST') {
+    if (/\/publish-from-bot$/.test(url)) return 'publish';
+    if (/\/install$/.test(url)) return 'install';
+    return 'publish';
+  }
+  if (method === 'GET') {
+    if (url.startsWith('/api/skills/search')) return 'search';
+    if (url === '/api/skills' || url.startsWith('/api/skills?')) return 'list';
+    return 'get';
+  }
+  return method.toLowerCase();
+}
+
+function deriveSkillPrincipal(req: http.IncomingMessage): string {
+  const origin = req.headers['x-metabot-origin'];
+  if (typeof origin === 'string' && origin === 'peer') {
+    const peerName = req.headers['x-metabot-peer-name'];
+    return typeof peerName === 'string' && peerName ? `peer:${peerName}` : 'peer';
+  }
+  return 'admin';
+}
+
+function getSourceIp(req: http.IncomingMessage): string {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff) return xff.split(',')[0].trim();
+  return req.socket.remoteAddress || '';
+}
 
 /**
  * Decide which visibility tiers the caller is allowed to see.
@@ -31,6 +62,25 @@ export async function handleSkillHubRoutes(
   const store = ctx.skillHubStore;
 
   if (!url.startsWith('/api/skills')) return false;
+
+  if (ctx.auditLog) {
+    const start = Date.now();
+    const op = deriveSkillOp(method, url);
+    const principalId = deriveSkillPrincipal(req);
+    const sourceIp = getSourceIp(req);
+    const auditLog = ctx.auditLog;
+    res.on('finish', () => {
+      auditLog.append({
+        ts: new Date().toISOString(),
+        op,
+        path: url,
+        principalId,
+        sourceIp,
+        status: res.statusCode,
+        latencyMs: Date.now() - start,
+      });
+    });
+  }
 
   // GET /api/skills/search?q=...
   if (method === 'GET' && url.startsWith('/api/skills/search')) {
