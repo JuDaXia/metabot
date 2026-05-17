@@ -5,28 +5,6 @@ import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
 import type { Visibility } from '../skill-hub-store.js';
 import { installSkillFromHub } from '../skills-installer.js';
-import type { AuditOp } from '../../observability/audit-log.js';
-
-function deriveSkillOp(method: string, url: string): AuditOp | string {
-  const pathname = url.split('?')[0];
-  if (pathname.endsWith('/install')) return 'install';
-  if (pathname.endsWith('/publish-from-bot')) return 'publish';
-  if (pathname === '/api/skills/search' || pathname.startsWith('/api/skills/search')) return 'search';
-  if (method === 'POST' && pathname === '/api/skills') return 'publish';
-  if (method === 'DELETE') return 'delete';
-  if (method === 'GET' && (pathname === '/api/skills' || pathname.startsWith('/api/skills?'))) return 'list';
-  if (method === 'GET') return 'get';
-  return method.toLowerCase();
-}
-
-function deriveSkillPrincipal(req: http.IncomingMessage): string {
-  if (req.headers['x-metabot-origin'] === 'peer') {
-    const peerName = req.headers['x-metabot-peer-name'];
-    if (typeof peerName === 'string' && peerName) return `peer:${peerName}`;
-    return 'peer';
-  }
-  return 'admin';
-}
 
 /**
  * Decide which visibility tiers the caller is allowed to see.
@@ -49,31 +27,10 @@ export async function handleSkillHubRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { logger, registry, peerManager, instance, auditLog } = ctx;
+  const { logger, registry, peerManager, instance } = ctx;
   const store = ctx.skillHubStore;
 
   if (!url.startsWith('/api/skills')) return false;
-
-  if (auditLog) {
-    const auditStart = Date.now();
-    const pathname = url.split('?')[0];
-    const principalId = deriveSkillPrincipal(req);
-    res.on('finish', () => {
-      try {
-        auditLog.append({
-          ts: new Date().toISOString(),
-          op: deriveSkillOp(method, url),
-          path: pathname,
-          principalId,
-          sourceIp: req.socket.remoteAddress || 'unknown',
-          status: res.statusCode,
-          latencyMs: Date.now() - auditStart,
-        });
-      } catch {
-        // Audit must never break the request path
-      }
-    });
-  }
 
   // GET /api/skills/search?q=...
   if (method === 'GET' && url.startsWith('/api/skills/search')) {
