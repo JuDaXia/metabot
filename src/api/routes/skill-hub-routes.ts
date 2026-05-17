@@ -3,7 +3,44 @@ import * as path from 'node:path';
 import type * as http from 'node:http';
 import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
+import type { Visibility } from '../skill-hub-store.js';
 import { installSkillFromHub } from '../skills-installer.js';
+import type { AuditOp } from '../../observability/audit-log.js';
+
+function deriveSkillOp(method: string, url: string): AuditOp | string {
+  const pathname = url.split('?')[0];
+  if (pathname.endsWith('/install')) return 'install';
+  if (pathname.endsWith('/publish-from-bot')) return 'publish';
+  if (pathname === '/api/skills/search' || pathname.startsWith('/api/skills/search')) return 'search';
+  if (method === 'POST' && pathname === '/api/skills') return 'publish';
+  if (method === 'DELETE') return 'delete';
+  if (method === 'GET' && (pathname === '/api/skills' || pathname.startsWith('/api/skills?'))) return 'list';
+  if (method === 'GET') return 'get';
+  return method.toLowerCase();
+}
+
+function deriveSkillPrincipal(req: http.IncomingMessage): string {
+  if (req.headers['x-metabot-origin'] === 'peer') {
+    const peerName = req.headers['x-metabot-peer-name'];
+    if (typeof peerName === 'string' && peerName) return `peer:${peerName}`;
+    return 'peer';
+  }
+  return 'admin';
+}
+
+/**
+ * Decide which visibility tiers the caller is allowed to see.
+ *
+ * Local admin (no `X-MetaBot-Origin: peer` header) sees everything; peers
+ * authenticated via shared API_SECRET or future peer-token tiers only see
+ * `published` + `shared`. See decision_acl_pragmatic_v1.md for the parallel
+ * memory-server design.
+ */
+function visibilityFilterForRequest(req: http.IncomingMessage): Visibility[] | undefined {
+  const origin = req.headers['x-metabot-origin'];
+  const isPeer = typeof origin === 'string' && origin === 'peer';
+  return isPeer ? ['published', 'shared'] : undefined;
+}
 
 export async function handleSkillHubRoutes(
   ctx: RouteContext,
@@ -12,17 +49,39 @@ export async function handleSkillHubRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { logger, registry, peerManager, instance } = ctx;
+  const { logger, registry, peerManager, instance, auditLog } = ctx;
   const store = ctx.skillHubStore;
 
   if (!url.startsWith('/api/skills')) return false;
+
+  if (auditLog) {
+    const auditStart = Date.now();
+    const pathname = url.split('?')[0];
+    const principalId = deriveSkillPrincipal(req);
+    res.on('finish', () => {
+      try {
+        auditLog.append({
+          ts: new Date().toISOString(),
+          op: deriveSkillOp(method, url),
+          path: pathname,
+          principalId,
+          sourceIp: req.socket.remoteAddress || 'unknown',
+          status: res.statusCode,
+          latencyMs: Date.now() - auditStart,
+        });
+      } catch {
+        // Audit must never break the request path
+      }
+    });
+  }
 
   // GET /api/skills/search?q=...
   if (method === 'GET' && url.startsWith('/api/skills/search')) {
     if (!store) { jsonResponse(res, 503, { error: 'Skill Hub not available' }); return true; }
     const params = new URL(url, 'http://localhost').searchParams;
     const query = params.get('q') || '';
-    const localResults = store.search(query);
+    const visibility = visibilityFilterForRequest(req);
+    const localResults = store.search(query, visibility ? { visibility } : undefined);
     // Include peer skills if not a peer request
     const isPeer = req.headers['x-metabot-origin'] === 'peer';
     if (!isPeer && peerManager) {
@@ -152,6 +211,12 @@ export async function handleSkillHubRoutes(
     const skillName = decodeURIComponent(url.split('/')[3]);
     const record = store.get(skillName);
     if (record) {
+      const visibility = visibilityFilterForRequest(req);
+      if (visibility && !visibility.includes(record.visibility)) {
+        // Peer asked for a name they shouldn't even know exists — 404, not 403.
+        jsonResponse(res, 404, { error: `Skill not found: ${skillName}` });
+        return true;
+      }
       jsonResponse(res, 200, record);
       return true;
     }
@@ -175,7 +240,8 @@ export async function handleSkillHubRoutes(
   // GET /api/skills — list all skills
   if (method === 'GET' && (url === '/api/skills' || url.startsWith('/api/skills?'))) {
     if (!store) { jsonResponse(res, 503, { error: 'Skill Hub not available' }); return true; }
-    const localSkills = store.list();
+    const visibility = visibilityFilterForRequest(req);
+    const localSkills = store.list(visibility ? { visibility } : undefined);
     const isPeer = req.headers['x-metabot-origin'] === 'peer';
     if (!isPeer && peerManager?.getPeerSkills) {
       const peerSkills = peerManager.getPeerSkills();
