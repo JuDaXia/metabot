@@ -468,9 +468,21 @@ mb-migrate-to-central \
 | `METABOT_URL` | `http://localhost:9100` | MetaBot API 地址 |
 | `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory 服务地址 |
 | `METABOT_PEERS` | — | Peer MetaBot 地址（逗号分隔） |
+| `METABOT_BACKEND` | `local` | 设为 `central` 时，memory + skill-hub 所有读写代理到中心服务器；本地 SQLite 退化为只读缓存 |
+| `CENTRAL_URL` | — | 中心服务器 base URL（如 `https://mb.xvirobotics.com`）。`METABOT_BACKEND=central` 时必填 |
+| `CENTRAL_TOKEN` | — | 对中心服务器调用的 Bearer Token。`METABOT_BACKEND=central` 时必填 |
+| `CENTRAL_FALLBACK_READONLY` | `true` | 中心不可达时是否用本地 SQLite 缓存兜底读；写仍会失败并返回 502 `central_unreachable` |
 | `LOG_LEVEL` | info | 日志级别 |
 
 </details>
+
+### 中心模式（Central mode）
+
+`METABOT_BACKEND=central` 把这台机器切成 "瘦客户端" 模式：所有 `/memory/*`、`/api/skills/*` 读写通过 HTTPS Bearer 代理到 `CENTRAL_URL`（默认 3s 超时）；外部请求头会带 `Authorization: Bearer ${CENTRAL_TOKEN}` 和 `X-MetaBot-Origin: client`（多 Bot 部署再附 `X-MetaBot-Client-Bot: <name>` 给中心审计用）。
+
+- **故障兜底**：网络挂了或中心返回 5xx，**读** 会从本地 SQLite 缓存返回（每次会打 `warn` 日志）；**写** 直接 502 `central_unreachable` 抛出，不静默写入本地。
+- **关掉兜底**：`CENTRAL_FALLBACK_READONLY=false` 时，中心不可达直接报错，**不** 走缓存。
+- **默认仍是 local**：不设 `METABOT_BACKEND` 或 `METABOT_BACKEND=local` 时，行为与之前完全一致。
 
 <details>
 <summary><strong>第三方 AI 服务商（国产模型）</strong></summary>

@@ -434,9 +434,21 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 | `METABOT_URL` | `http://localhost:9100` | MetaBot API URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
 | `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory server URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
 | `METABOT_PEERS` | — | Peer MetaBot URLs (comma-separated). Prefer HTTPS for internet-reachable peers |
+| `METABOT_BACKEND` | `local` | When set to `central`, all memory + skill-hub reads/writes proxy to a central server; local SQLite degrades to a read-only fallback cache |
+| `CENTRAL_URL` | — | Central server base URL (e.g. `https://mb.xvirobotics.com`). Required when `METABOT_BACKEND=central` |
+| `CENTRAL_TOKEN` | — | Bearer token for outbound calls to central. Required when `METABOT_BACKEND=central` |
+| `CENTRAL_FALLBACK_READONLY` | `true` | Serve cached reads from local SQLite when central is unreachable; writes still fail loudly with HTTP 502 `central_unreachable` |
 | `LOG_LEVEL` | info | Log level |
 
 </details>
+
+### Central mode
+
+`METABOT_BACKEND=central` flips this MetaBot into "thin client" mode: every `/memory/*` and `/api/skills/*` read/write is proxied over HTTPS+Bearer to `CENTRAL_URL` (3 s default timeout). Outbound calls carry `Authorization: Bearer ${CENTRAL_TOKEN}` plus `X-MetaBot-Origin: client` (and `X-MetaBot-Client-Bot: <name>` in multi-bot deployments) so the central audit log can attribute writes.
+
+- **Failure mode** — when central is unreachable or returns 5xx, **reads** fall back to the local SQLite cache (with a `warn` log on each fallback) and **writes** fail loudly with HTTP `502 { error: 'central_unreachable' }`. Writes are never silently absorbed locally.
+- **Disable fallback** — set `CENTRAL_FALLBACK_READONLY=false` to make reads error out instead of using the cache.
+- **Default is local** — leaving `METABOT_BACKEND` unset (or set to `local`) preserves existing single-instance behaviour.
 
 <details>
 <summary><strong>Third-party AI providers</strong></summary>
