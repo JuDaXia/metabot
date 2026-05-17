@@ -19,6 +19,7 @@ import type { SessionRegistry } from '../../session/session-registry.js';
 import type { ActivityStore } from '../activity-store.js';
 import type { SkillHubStore } from '../skill-hub-store.js';
 import type { InstanceIdentity } from '../../cluster/identity.js';
+import type { AuditLog } from '../../observability/audit-log.js';
 
 export interface RouteContext {
   instance: InstanceIdentity;
@@ -43,6 +44,7 @@ export interface RouteContext {
   sessionRegistry?: SessionRegistry;
   activityStore?: ActivityStore;
   skillHubStore?: SkillHubStore;
+  auditLog?: AuditLog;
 }
 
 /**

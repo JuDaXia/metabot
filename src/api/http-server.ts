@@ -18,6 +18,7 @@ import { VoiceIdentityStore } from './voice-identity.js';
 import { RtcVoiceChatService } from './rtc-voice-chat.js';
 import { ActivityStore } from './activity-store.js';
 import { SkillHubStore } from './skill-hub-store.js';
+import { createDefaultAuditLog, type AuditLog } from '../observability/audit-log.js';
 import { metrics as _metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
 import {
@@ -56,6 +57,7 @@ interface ApiServerOptions {
   teamManager?: TeamManager;
   sessionRegistry?: SessionRegistry;
   instance: InstanceIdentity;
+  auditLog?: AuditLog;
 }
 
 const startTime = Date.now();
@@ -80,6 +82,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   if (rtcService.isConfigured()) {
     logger.info('RTC voice chat service enabled');
   }
+  const auditLog = options.auditLog ?? createDefaultAuditLog(logger);
 
   const ws: { handle?: WebSocketHandle } = {};
 
@@ -95,6 +98,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     sessionRegistry: options.sessionRegistry,
     activityStore,
     skillHubStore,
+    auditLog,
   };
 
   // Route handlers in priority order
