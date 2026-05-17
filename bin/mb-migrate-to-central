@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# mb-migrate-to-central — upload local memory + skill-hub to a central MetaBot server
+# Phase 3 of the central-architecture pivot (see docs/internal/central-architecture.md).
+#
+# Run from a MetaBot install. Uses dist/migration/cli.js when present (production
+# build), falls back to tsx for dev. See `--help` for full usage.
+
+set -euo pipefail
+
+# Resolve METABOT_HOME (env var > script's parent > $HOME/metabot)
+if [[ -z "${METABOT_HOME:-}" ]]; then
+  _src="${BASH_SOURCE[0]}"
+  if command -v readlink &>/dev/null; then
+    _src="$(readlink -f "$_src" 2>/dev/null || echo "$_src")"
+  fi
+  _sd="$(cd "$(dirname "$_src")/.." 2>/dev/null && pwd)" || _sd=""
+  if [[ -n "$_sd" && -f "$_sd/package.json" ]]; then
+    METABOT_HOME="$_sd"
+  else
+    METABOT_HOME="$HOME/metabot"
+  fi
+fi
+
+cd "$METABOT_HOME"
+
+DIST_CLI="$METABOT_HOME/dist/migration/cli.js"
+SRC_CLI="$METABOT_HOME/src/migration/cli.ts"
+
+if [[ -f "$DIST_CLI" ]]; then
+  exec node "$DIST_CLI" "$@"
+elif command -v tsx &>/dev/null; then
+  exec tsx "$SRC_CLI" "$@"
+elif [[ -x "$METABOT_HOME/node_modules/.bin/tsx" ]]; then
+  exec "$METABOT_HOME/node_modules/.bin/tsx" "$SRC_CLI" "$@"
+else
+  echo "error: cannot find dist/migration/cli.js — run 'npm run build' first" >&2
+  exit 1
+fi

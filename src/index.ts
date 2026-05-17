@@ -18,6 +18,7 @@ import { loadPeerToken } from './cluster/peer-token.js';
 import { TaskScheduler } from './scheduler/task-scheduler.js';
 import { startApiServer } from './api/http-server.js';
 import { startMemoryServer } from './memory/memory-server.js';
+import { createMemoryClientCentral } from './memory/memory-client-central.js';
 import { DocSync } from './sync/doc-sync.js';
 import { MemoryClient } from './memory/memory-client.js';
 
@@ -259,9 +260,24 @@ async function main() {
     }
   }
 
-  // Start embedded MetaMemory server
+  // Start embedded MetaMemory server. When central backend mode is enabled
+  // (METABOT_BACKEND=central), wire in a central client so every memory
+  // operation proxies to the central server; the local SQLite cache is kept
+  // as a read-only fallback.
   let memoryServer: ReturnType<typeof startMemoryServer> | undefined;
   if (appConfig.memory.enabled) {
+    let centralClient;
+    if (appConfig.central.backend === 'central' && appConfig.central.url && appConfig.central.token) {
+      centralClient = createMemoryClientCentral({
+        centralUrl: appConfig.central.url,
+        centralToken: appConfig.central.token,
+        fallbackReadonly: appConfig.central.fallbackReadonly,
+        cacheDir: appConfig.memory.databaseDir,
+        clientBot: appConfig.instance.instanceName,
+        logger,
+      });
+      logger.info({ centralUrl: appConfig.central.url }, 'Central memory client wired in (METABOT_BACKEND=central)');
+    }
     memoryServer = startMemoryServer({
       port: appConfig.memory.port,
       databaseDir: appConfig.memory.databaseDir,
@@ -273,6 +289,7 @@ async function main() {
       memoryNamespace: appConfig.memory.namespace,
       memoryNamespaces: appConfig.memory.namespaces,
       peerTokenLookup: (token) => peerManager.findPeerByInboundToken(token),
+      ...(centralClient ? { centralClient } : {}),
       logger,
     });
   }
@@ -346,6 +363,15 @@ async function main() {
     memoryAuthToken: appConfig.memory.adminToken || appConfig.memory.readerToken || appConfig.memory.secret || undefined,
     instance: appConfig.instance,
     sessionRegistry,
+    ...(appConfig.central.backend === 'central' && appConfig.central.url && appConfig.central.token
+      ? {
+          centralConfig: {
+            url: appConfig.central.url,
+            token: appConfig.central.token,
+            fallbackReadonly: appConfig.central.fallbackReadonly,
+          },
+        }
+      : {}),
   });
 
   // Graceful shutdown

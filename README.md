@@ -267,6 +267,41 @@ MEMORY_INSTANCE_TOKEN=instance-scoped-token
 >
 > 这是在中心化架构（Phase 2–3）落地前，对 P2P 联邦更安全的默认值——避免新文件夹一旦创建就立刻对全网内其他 MetaBot 可见。
 
+### 迁移到中心服务器（Phase 3）
+
+把本地 SQLite（MetaMemory + Skill Hub）一次性上传到一台中心 MetaBot 服务器：
+
+```bash
+# 1) 先 dry-run 看会上传什么（默认就是 dry-run，不会真的 POST）
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main
+
+# 2) 确认无误，加 --apply 真上传
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main \
+  --apply --continue-on-error
+```
+
+命名空间映射规则（本地 → 中心）：
+
+| 本地 | 中心 |
+|---|---|
+| `/projects/<X>` | `/users/<bot-name>/projects/<X>` |
+| `/instances/<id>/...` | `/users/<bot-name>/private/...` |
+| `/shared/...` | `/shared/...` |
+| `/users/<别人>/...` | 跳过（不是我们的，不上传） |
+
+特性：
+
+- **幂等**：每次跑都先 `GET` 中心确认存在性 + 内容 hash 比较，已存在的不会重复上传
+- **可中断**：失败时默认会终止；`--continue-on-error` 让 4xx/5xx 不阻断整批
+- **本地数据保留**：上传成功的行只在本地 SQLite 加 `migrated_at` 时间戳，原数据不删除，可作 fallback
+- **可选范围**：`--include memory` 或 `--include skills` 单独跑一边
+
 ### 定时任务（Claude Code 原生）
 
 直接用 CC 内置的 `CronCreate` 和 `/loop`，会话内即开即用：
@@ -433,9 +468,21 @@ MEMORY_INSTANCE_TOKEN=instance-scoped-token
 | `METABOT_URL` | `http://localhost:9100` | MetaBot API 地址 |
 | `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory 服务地址 |
 | `METABOT_PEERS` | — | Peer MetaBot 地址（逗号分隔） |
+| `METABOT_BACKEND` | `local` | 设为 `central` 时，memory + skill-hub 所有读写代理到中心服务器；本地 SQLite 退化为只读缓存 |
+| `CENTRAL_URL` | — | 中心服务器 base URL（如 `https://mb.xvirobotics.com`）。`METABOT_BACKEND=central` 时必填 |
+| `CENTRAL_TOKEN` | — | 对中心服务器调用的 Bearer Token。`METABOT_BACKEND=central` 时必填 |
+| `CENTRAL_FALLBACK_READONLY` | `true` | 中心不可达时是否用本地 SQLite 缓存兜底读；写仍会失败并返回 502 `central_unreachable` |
 | `LOG_LEVEL` | info | 日志级别 |
 
 </details>
+
+### 中心模式（Central mode）
+
+`METABOT_BACKEND=central` 把这台机器切成 "瘦客户端" 模式：所有 `/memory/*`、`/api/skills/*` 读写通过 HTTPS Bearer 代理到 `CENTRAL_URL`（默认 3s 超时）；外部请求头会带 `Authorization: Bearer ${CENTRAL_TOKEN}` 和 `X-MetaBot-Origin: client`（多 Bot 部署再附 `X-MetaBot-Client-Bot: <name>` 给中心审计用）。
+
+- **故障兜底**：网络挂了或中心返回 5xx，**读** 会从本地 SQLite 缓存返回（每次会打 `warn` 日志）；**写** 直接 502 `central_unreachable` 抛出，不静默写入本地。
+- **关掉兜底**：`CENTRAL_FALLBACK_READONLY=false` 时，中心不可达直接报错，**不** 走缓存。
+- **默认仍是 local**：不设 `METABOT_BACKEND` 或 `METABOT_BACKEND=local` 时，行为与之前完全一致。
 
 <details>
 <summary><strong>第三方 AI 服务商（国产模型）</strong></summary>

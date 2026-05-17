@@ -4,8 +4,11 @@ import * as path from 'node:path';
 import * as url from 'node:url';
 import type { Logger } from '../utils/logger.js';
 import { MemoryStorage } from './memory-storage.js';
-import type { MemoryAccess } from './memory-storage.js';
+import type { MemoryAccess, Visibility, DocumentCreateInput, DocumentUpdateInput } from './memory-storage.js';
+import type { MemoryClientCentral } from './memory-client-central.js';
+import { CentralUnreachableError } from './memory-client-central.js';
 import { AuditLog, createDefaultAuditLog, type AuditOp } from '../observability/audit-log.js';
+import { memoryEvents } from './memory-events.js';
 import {
   handleGetFolders,
   handleCreateFolder,
@@ -54,6 +57,13 @@ export interface MemoryServerOptions {
    * METABOT_AUDIT_DIR / METABOT_AUDIT_ENABLED defaults.
    */
   auditLog?: AuditLog;
+  /**
+   * Phase 2 of the central-architecture pivot: when supplied, the embedded
+   * memory server delegates every memory operation to the central server via
+   * this client (with read-only fallback to the local cache). When omitted,
+   * the local SQLite-backed storage handles everything as before.
+   */
+  centralClient?: MemoryClientCentral;
   logger: Logger;
 }
 
@@ -145,6 +155,141 @@ async function parseJsonBody(req: http.IncomingMessage): Promise<Record<string, 
   }
 }
 
+/**
+ * Central-client route handler — Phase 2 of the central-architecture pivot.
+ *
+ * Maps the legacy `/api/folders` + `/api/documents` + `/api/search` surface
+ * to the async `MemoryClientCentral`. Returns true when the route matched
+ * and the response was written; false when the request should fall through
+ * to the local SQLite path (e.g. /api/health, unknown paths).
+ */
+async function handleCentralRoute(
+  client: MemoryClientCentral,
+  method: string,
+  pathname: string,
+  query: URLSearchParams,
+  req: http.IncomingMessage,
+  role: MemoryAccess,
+  res: http.ServerResponse,
+): Promise<boolean> {
+  try {
+    if (method === 'GET' && pathname === '/api/folders') {
+      const tree = await client.getFolderTree(role);
+      jsonResponse(res, 200, tree);
+      return true;
+    }
+    if (method === 'POST' && pathname === '/api/folders') {
+      const body = await parseJsonBody(req);
+      const name = body.name as string | undefined;
+      if (!name) { jsonResponse(res, 400, { detail: 'name is required' }); return true; }
+      const parentId = (body.parent_id as string) || 'root';
+      const visibility = ((body.visibility as Visibility) || 'private');
+      const folder = await client.createFolder(name, parentId, visibility, role);
+      memoryEvents.emitChange({ type: 'folder_created', folderId: folder.id });
+      jsonResponse(res, 201, folder);
+      return true;
+    }
+    if (method === 'PUT' && pathname.startsWith('/api/folders/')) {
+      // Folder visibility is local-only — delegate to the cache via updateFolder.
+      const folderId = decodeURIComponent(pathname.slice('/api/folders/'.length));
+      if (typeof role !== 'string' || role !== 'admin') {
+        jsonResponse(res, 403, { detail: 'Only admin can update folder settings' });
+        return true;
+      }
+      const body = await parseJsonBody(req);
+      const data: { visibility?: Visibility } = {};
+      if (body.visibility !== undefined) data.visibility = body.visibility as Visibility;
+      const folder = client.updateFolder(folderId, data);
+      if (!folder) { jsonResponse(res, 404, { detail: 'Folder not found' }); return true; }
+      jsonResponse(res, 200, folder);
+      return true;
+    }
+    if (method === 'DELETE' && pathname.startsWith('/api/folders/')) {
+      const folderId = decodeURIComponent(pathname.slice('/api/folders/'.length));
+      await client.deleteFolder(folderId, role);
+      memoryEvents.emitChange({ type: 'folder_deleted', folderId });
+      jsonResponse(res, 200, { ok: true });
+      return true;
+    }
+    if (method === 'GET' && pathname === '/api/documents/by-path') {
+      const docPath = query.get('path');
+      if (!docPath) { jsonResponse(res, 400, { detail: 'path query parameter is required' }); return true; }
+      const doc = await client.getDocumentByPath(docPath, role);
+      if (!doc) { jsonResponse(res, 404, { detail: 'Document not found' }); return true; }
+      jsonResponse(res, 200, doc);
+      return true;
+    }
+    if (method === 'GET' && pathname === '/api/documents') {
+      const folderId = query.get('folder_id') || undefined;
+      const limit = Math.min(Math.max(parseInt(query.get('limit') || '50', 10) || 50, 1), 200);
+      const offset = Math.max(parseInt(query.get('offset') || '0', 10) || 0, 0);
+      const docs = await client.listDocuments(folderId, limit, offset, role);
+      jsonResponse(res, 200, docs);
+      return true;
+    }
+    if (method === 'GET' && pathname.startsWith('/api/documents/')) {
+      const docId = decodeURIComponent(pathname.slice('/api/documents/'.length));
+      const doc = await client.getDocument(docId, role);
+      if (!doc) { jsonResponse(res, 404, { detail: 'Document not found' }); return true; }
+      jsonResponse(res, 200, doc);
+      return true;
+    }
+    if (method === 'POST' && pathname === '/api/documents') {
+      const body = await parseJsonBody(req);
+      const title = body.title as string | undefined;
+      if (!title) { jsonResponse(res, 400, { detail: 'title is required' }); return true; }
+      const data: DocumentCreateInput = {
+        title,
+        folder_id: (body.folder_id as string) || 'root',
+        content: (body.content as string) || '',
+        tags: Array.isArray(body.tags) ? (body.tags as string[]) : [],
+        created_by: (body.created_by as string) || '',
+      };
+      const doc = await client.createDocument(data, role);
+      memoryEvents.emitChange({ type: 'document_created', documentId: doc.id });
+      jsonResponse(res, 201, doc);
+      return true;
+    }
+    if (method === 'PUT' && pathname.startsWith('/api/documents/')) {
+      const docId = decodeURIComponent(pathname.slice('/api/documents/'.length));
+      const body = await parseJsonBody(req);
+      const data: DocumentUpdateInput = {};
+      if (body.title !== undefined) data.title = body.title as string;
+      if (body.content !== undefined) data.content = body.content as string;
+      if (body.tags !== undefined) data.tags = Array.isArray(body.tags) ? (body.tags as string[]) : [];
+      if (body.folder_id !== undefined) data.folder_id = body.folder_id as string;
+      const doc = await client.updateDocument(docId, data, role);
+      if (!doc) { jsonResponse(res, 404, { detail: 'Document not found' }); return true; }
+      memoryEvents.emitChange({ type: 'document_updated', documentId: docId });
+      jsonResponse(res, 200, doc);
+      return true;
+    }
+    if (method === 'DELETE' && pathname.startsWith('/api/documents/')) {
+      const docId = decodeURIComponent(pathname.slice('/api/documents/'.length));
+      const ok = await client.deleteDocument(docId, role);
+      if (!ok) { jsonResponse(res, 404, { detail: 'Document not found' }); return true; }
+      memoryEvents.emitChange({ type: 'document_deleted', documentId: docId });
+      jsonResponse(res, 200, { ok: true });
+      return true;
+    }
+    if (method === 'GET' && pathname === '/api/search') {
+      const q = query.get('q');
+      if (!q || q.trim().length === 0) { jsonResponse(res, 400, { detail: 'q query parameter is required' }); return true; }
+      const limit = Math.min(Math.max(parseInt(query.get('limit') || '20', 10) || 20, 1), 100);
+      const results = await client.searchDocuments(q, limit, role);
+      jsonResponse(res, 200, results);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    if (err instanceof CentralUnreachableError) {
+      jsonResponse(res, 502, { error: 'central_unreachable', detail: err.message });
+      return true;
+    }
+    throw err;
+  }
+}
+
 // Resolve the static directory — works for both src/ (tsx) and dist/ (compiled)
 function resolveStaticDir(): string {
   const thisFile = url.fileURLToPath(import.meta.url);
@@ -162,8 +307,14 @@ function resolveStaticDir(): string {
 }
 
 export function startMemoryServer(options: MemoryServerOptions): { server: http.Server; storage: MemoryStorage; auditLog: AuditLog } {
-  const { port, databaseDir, secret, adminToken, readerToken, instanceToken, instanceId, memoryNamespace, memoryNamespaces, peerTokenLookup, logger } = options;
-  const storage = new MemoryStorage(databaseDir, logger);
+  const { port, databaseDir, secret, adminToken, readerToken, instanceToken, instanceId, memoryNamespace, memoryNamespaces, peerTokenLookup, centralClient, logger } = options;
+  // When central client is wired in, its embedded SQLite cache *is* the local
+  // storage. Reusing it keeps stats/UI consistent and avoids double-opening
+  // the cache DB file.
+  const storage = centralClient ? centralClient.getCache() : new MemoryStorage(databaseDir, logger);
+  if (centralClient) {
+    logger.info('MetaMemory server running in central client mode (reads/writes proxy via central, cache fallback for reads)');
+  }
   const auditLog = options.auditLog ?? createDefaultAuditLog(logger);
   const staticDir = resolveStaticDir();
   const writableNamespaces = memoryNamespaces?.length
@@ -278,6 +429,16 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
         }
         role = resolved;
         auditPrincipalId = derivePrincipalId(role);
+      }
+
+      // ---- Central-routed branch (Phase 2) ----
+      // When a central client is wired in, route the request through it
+      // before falling through to the local SQLite path. Failures inside the
+      // central client either fall back to the cache (reads) or surface as
+      // 502 central_unreachable (writes), per CENTRAL_FALLBACK_READONLY.
+      if (centralClient && pathname.startsWith('/api/')) {
+        const handled = await handleCentralRoute(centralClient, method, pathname, query, req, role, res);
+        if (handled) return;
       }
 
       // Folders

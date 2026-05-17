@@ -114,6 +114,24 @@ export interface PeerConfig {
   secret?: string;
 }
 
+/**
+ * Central backend configuration — Phase 2 of the central-architecture pivot.
+ *
+ * When `METABOT_BACKEND=central`, all memory + skill-hub reads/writes proxy
+ * to the central server via HTTPS+Bearer instead of hitting the local SQLite.
+ * Local SQLite remains as a read-only fallback cache on network failure.
+ */
+export interface CentralConfig {
+  /** 'local' (default, current SQLite-only behaviour) or 'central' (proxy through central server). */
+  backend: 'local' | 'central';
+  /** Central server base URL (e.g. https://mb.xvirobotics.com). Required when backend='central'. */
+  url?: string;
+  /** Bearer token for outbound calls to central. Required when backend='central'. */
+  token?: string;
+  /** Serve cached reads from local SQLite when central is unreachable. Default true. */
+  fallbackReadonly: boolean;
+}
+
 export interface AppConfig {
   instance: InstanceIdentity;
   feishuBots: BotConfig[];
@@ -146,6 +164,8 @@ export interface AppConfig {
   };
   /** Peer MetaBot instances for cross-instance bot discovery and task delegation. */
   peers: PeerConfig[];
+  /** Central backend wiring (Phase 2 pivot). */
+  central: CentralConfig;
 }
 
 function required(name: string): string {
@@ -662,6 +682,15 @@ export function loadAppConfig(): AppConfig {
     }
   }
 
+  const centralBackendRaw = (process.env.METABOT_BACKEND || 'local').trim().toLowerCase();
+  const centralBackend: CentralConfig['backend'] = centralBackendRaw === 'central' ? 'central' : 'local';
+  const centralUrl = process.env.CENTRAL_URL ? process.env.CENTRAL_URL.replace(/\/+$/, '') : undefined;
+  const centralToken = process.env.CENTRAL_TOKEN || undefined;
+  const centralFallbackReadonly = (process.env.CENTRAL_FALLBACK_READONLY || 'true').trim().toLowerCase() !== 'false';
+  if (centralBackend === 'central' && (!centralUrl || !centralToken)) {
+    throw new Error('METABOT_BACKEND=central requires both CENTRAL_URL and CENTRAL_TOKEN');
+  }
+
   return {
     instance,
     feishuBots,
@@ -689,5 +718,11 @@ export function loadAppConfig(): AppConfig {
       namespaces: memoryNamespaces,
     },
     peers,
+    central: {
+      backend: centralBackend,
+      ...(centralUrl ? { url: centralUrl } : {}),
+      ...(centralToken ? { token: centralToken } : {}),
+      fallbackReadonly: centralFallbackReadonly,
+    },
   };
 }

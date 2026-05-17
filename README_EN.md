@@ -243,6 +243,41 @@ Search MetaMemory for our API design conventions.
 >
 > This is the safer default in the P2P-federation era while the centralized architecture (Phase 2–3) is being built — new folders no longer become visible to every MetaBot on the LAN the instant they're created.
 
+### Migrating to central (Phase 3)
+
+One-shot upload of this bot's local SQLite stores (MetaMemory + Skill Hub) to a central MetaBot server:
+
+```bash
+# 1) Dry-run first — see what would be uploaded (this is the default; no POSTs happen)
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main
+
+# 2) Once it looks right, add --apply to actually upload
+mb-migrate-to-central \
+  --central-url https://mb.xvirobotics.com \
+  --token "$CENTRAL_TOKEN" \
+  --bot-name floodsung-main \
+  --apply --continue-on-error
+```
+
+Namespace mapping (local → central):
+
+| Local | Central |
+|---|---|
+| `/projects/<X>` | `/users/<bot-name>/projects/<X>` |
+| `/instances/<id>/...` | `/users/<bot-name>/private/...` |
+| `/shared/...` | `/shared/...` |
+| `/users/<other>/...` | Skipped (not ours to migrate) |
+
+Highlights:
+
+- **Idempotent**: every row is `GET`-checked first and content-hashed before being POSTed, so re-runs upload nothing new.
+- **Resumable**: by default the run aborts on the first 4xx/5xx; pass `--continue-on-error` to keep going and report failures at the end.
+- **Local data is preserved**: migrated rows get a `migrated_at` timestamp on the local SQLite (additive schema migration). Nothing is deleted, so the local copy remains as a fallback.
+- **Selective**: `--include memory` or `--include skills` to run only one side.
+
 ### Scheduling (Claude Code native)
 
 Use CC's built-in `CronCreate` and `/loop` — zero setup, runs inside the session:
@@ -399,9 +434,21 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 | `METABOT_URL` | `http://localhost:9100` | MetaBot API URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
 | `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory server URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
 | `METABOT_PEERS` | — | Peer MetaBot URLs (comma-separated). Prefer HTTPS for internet-reachable peers |
+| `METABOT_BACKEND` | `local` | When set to `central`, all memory + skill-hub reads/writes proxy to a central server; local SQLite degrades to a read-only fallback cache |
+| `CENTRAL_URL` | — | Central server base URL (e.g. `https://mb.xvirobotics.com`). Required when `METABOT_BACKEND=central` |
+| `CENTRAL_TOKEN` | — | Bearer token for outbound calls to central. Required when `METABOT_BACKEND=central` |
+| `CENTRAL_FALLBACK_READONLY` | `true` | Serve cached reads from local SQLite when central is unreachable; writes still fail loudly with HTTP 502 `central_unreachable` |
 | `LOG_LEVEL` | info | Log level |
 
 </details>
+
+### Central mode
+
+`METABOT_BACKEND=central` flips this MetaBot into "thin client" mode: every `/memory/*` and `/api/skills/*` read/write is proxied over HTTPS+Bearer to `CENTRAL_URL` (3 s default timeout). Outbound calls carry `Authorization: Bearer ${CENTRAL_TOKEN}` plus `X-MetaBot-Origin: client` (and `X-MetaBot-Client-Bot: <name>` in multi-bot deployments) so the central audit log can attribute writes.
+
+- **Failure mode** — when central is unreachable or returns 5xx, **reads** fall back to the local SQLite cache (with a `warn` log on each fallback) and **writes** fail loudly with HTTP `502 { error: 'central_unreachable' }`. Writes are never silently absorbed locally.
+- **Disable fallback** — set `CENTRAL_FALLBACK_READONLY=false` to make reads error out instead of using the cache.
+- **Default is local** — leaving `METABOT_BACKEND` unset (or set to `local`) preserves existing single-instance behaviour.
 
 <details>
 <summary><strong>Third-party AI providers</strong></summary>
