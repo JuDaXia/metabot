@@ -301,6 +301,67 @@ print(fid or '')
     _curl "$META_MEMORY_URL/api/health" | _json
     ;;
 
+  # --- Audit log query ---
+  # Usage: mm audit <YYYY-MM-DD> [--filter principal=X] [--filter op=X]
+  audit|a)
+    if [[ -z "${1:-}" ]]; then
+      echo "Usage: mm audit <YYYY-MM-DD> [--filter principal=X] [--filter op=X]"
+      exit 1
+    fi
+    _date="$1"; shift || true
+    _filters=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --filter) _filters+=("$2"); shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    # Locate audit dir: METABOT_AUDIT_DIR > $METABOT_HOME/data/audit > ~/feishu-claudecode/data/audit > ~/metabot/data/audit > $(pwd)/data/audit
+    _audit_dir="${METABOT_AUDIT_DIR:-}"
+    if [[ -z "$_audit_dir" ]]; then
+      for d in "${METABOT_HOME:-}/data/audit" "$HOME/feishu-claudecode/data/audit" "$HOME/metabot/data/audit" "$(pwd)/data/audit"; do
+        if [[ -n "$d" && -d "$d" ]]; then _audit_dir="$d"; break; fi
+      done
+    fi
+    if [[ -z "$_audit_dir" || ! -d "$_audit_dir" ]]; then
+      echo "Error: audit dir not found (set METABOT_AUDIT_DIR)" >&2
+      exit 1
+    fi
+    python3 -c "
+import json, os, sys, glob
+audit_dir = sys.argv[1]
+date = sys.argv[2]
+filters = {}
+for f in sys.argv[3:]:
+    if '=' in f:
+        k, v = f.split('=', 1)
+        filters[k.strip()] = v.strip()
+files = sorted(glob.glob(os.path.join(audit_dir, date + '*.jsonl')))
+if not files:
+    print('No audit log for ' + date + ' in ' + audit_dir, file=sys.stderr)
+    sys.exit(0)
+print('ts                        status     ms  op        principal                     sourceIp         path')
+for fp in files:
+    with open(fp, 'r') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            # Map CLI-friendly filter keys to entry keys
+            _key_map = {'principal': 'principalId', 'ip': 'sourceIp'}
+            ok = True
+            for k, v in filters.items():
+                ek = _key_map.get(k, k)
+                if str(e.get(ek, '')) != v:
+                    ok = False; break
+            if not ok: continue
+            print(f\"{e.get('ts','')[:24]:24}  {e.get('status',0):>3}  {e.get('latencyMs',0):>5}  {str(e.get('op',''))[:8]:<8}  {str(e.get('principalId',''))[:28]:<28}  {str(e.get('sourceIp',''))[:15]:<15}  {e.get('path','')}\")
+" "$_audit_dir" "$_date" "${_filters[@]}"
+    ;;
+
   *)
     echo "mm - MetaMemory CLI"
     echo ""
@@ -334,5 +395,6 @@ print(fid or '')
     echo ""
     echo "  System:"
     echo "    mm health                      - Health check"
+    echo "    mm audit <YYYY-MM-DD>          - Query audit log (--filter principal=X --filter op=X)"
     ;;
 esac

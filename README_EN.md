@@ -554,6 +554,23 @@ npm run lint         # ESLint check
 npm run build        # TypeScript compile
 ```
 
+### Audit Log
+
+Every `/memory/*` and `/api/skills/*` request is recorded as a JSONL line in `data/audit/YYYY-MM-DD.jsonl` (rotated by UTC date; once a file exceeds 100 MB, subsequent writes go to `.1.jsonl`, `.2.jsonl`, etc.; each append is followed by `fsync`). Entry shape: `{ts, op, path, principalId, sourceIp, status, latencyMs}`.
+
+Environment variables:
+
+- `METABOT_AUDIT_ENABLED` (default `true`) — set to `false` to disable
+- `METABOT_AUDIT_DIR` (default `./data/audit`) — override storage location
+
+Query the log:
+
+```bash
+mm audit 2026-05-17                           # all entries for that day
+mm audit 2026-05-17 --filter principal=admin  # only admin requests
+mm audit 2026-05-17 --filter op=create        # only create operations
+```
+
 ## Roadmap
 
 - [ ] Async bidirectional agent communication protocol

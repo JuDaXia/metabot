@@ -592,6 +592,23 @@ npm run lint         # ESLint 检查
 npm run build        # TypeScript 编译
 ```
 
+### 审计日志（Audit Log）
+
+`/memory/*` 与 `/api/skills/*` 的每次请求会写入 JSONL 行到 `data/audit/YYYY-MM-DD.jsonl`（按 UTC 日期切分，单文件达到 100 MB 后追加 `.1.jsonl` 等增量后缀；每次 append 触发 fsync）。每行字段：`{ts, op, path, principalId, sourceIp, status, latencyMs}`。
+
+环境变量：
+
+- `METABOT_AUDIT_ENABLED`（默认 `true`）—— 设为 `false` 关闭审计日志
+- `METABOT_AUDIT_DIR`（默认 `./data/audit`）—— 自定义存储目录
+
+查询：
+
+```bash
+mm audit 2026-05-17                           # 列出 2026-05-17 当天所有条目
+mm audit 2026-05-17 --filter principal=admin  # 仅 admin 发起的请求
+mm audit 2026-05-17 --filter op=create        # 仅 create 操作
+```
+
 ## Roadmap
 
 - [ ] Agent 异步双向通信协议
