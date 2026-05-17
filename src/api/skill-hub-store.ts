@@ -57,6 +57,13 @@ export interface SkillPublishInput {
   visibility?: 'private' | 'published' | 'shared';
 }
 
+export type Visibility = 'private' | 'published' | 'shared';
+
+export interface ListOptions {
+  /** Only return skills whose visibility is in this allow-list. Omit for all. */
+  visibility?: Visibility[];
+}
+
 /**
  * Parse YAML-like frontmatter from SKILL.md content.
  * Extracts key: value pairs between --- delimiters.
@@ -248,13 +255,15 @@ export class SkillHubStore {
   }
 
   /** List all skills (summary only, no SKILL.md content). */
-  list(): SkillSummary[] {
-    const rows = this.db.prepare(
+  list(options?: ListOptions): SkillSummary[] {
+    const { sql, params } = this.applyVisibilityFilter(
       `SELECT id, name, description, version, author, owner_instance_id,
               owner_instance_name, visibility, content_hash, tags,
               published_at, updated_at
-       FROM skills ORDER BY updated_at DESC`,
-    ).all() as any[];
+       FROM skills`,
+      options?.visibility,
+    );
+    const rows = this.db.prepare(`${sql} ORDER BY updated_at DESC`).all(...params) as any[];
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -272,21 +281,23 @@ export class SkillHubStore {
   }
 
   /** Full-text search across skill name, description, tags, and content. */
-  search(query: string): SkillSearchResult[] {
+  search(query: string, options?: ListOptions): SkillSearchResult[] {
     const escaped = this.escapeFts5Query(query);
-    if (!escaped) return this.list().map((s) => ({ ...s, snippet: '' }));
+    if (!escaped) return this.list(options).map((s) => ({ ...s, snippet: '' }));
 
-    const rows = this.db.prepare(`
-      SELECT s.id, s.name, s.description, s.version, s.author,
-             s.owner_instance_id, s.owner_instance_name, s.visibility,
-             s.content_hash, s.tags,
-             s.published_at, s.updated_at,
-             snippet(skills_fts, 3, '<b>', '</b>', '...', 32) AS snippet
-      FROM skills_fts f
-      JOIN skills s ON s.rowid = f.rowid
-      WHERE skills_fts MATCH ?
-      ORDER BY rank
-    `).all(escaped) as any[];
+    const { sql, params } = this.applyVisibilityFilter(
+      `SELECT s.id, s.name, s.description, s.version, s.author,
+              s.owner_instance_id, s.owner_instance_name, s.visibility,
+              s.content_hash, s.tags,
+              s.published_at, s.updated_at,
+              snippet(skills_fts, 3, '<b>', '</b>', '...', 32) AS snippet
+       FROM skills_fts f
+       JOIN skills s ON s.rowid = f.rowid
+       WHERE skills_fts MATCH ?`,
+      options?.visibility,
+      's.visibility',
+    );
+    const rows = this.db.prepare(`${sql} ORDER BY rank`).all(escaped, ...params) as any[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -334,6 +345,27 @@ export class SkillHubStore {
       hasReferences: !!row.references_tar,
       publishedAt: row.published_at,
       updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Append a `visibility IN (?, ?, ...)` clause when an allow-list is given.
+   * `column` defaults to the unqualified `visibility` column; callers that
+   * join `skills` with an alias (e.g. FTS search) pass `s.visibility`.
+   */
+  private applyVisibilityFilter(
+    baseSql: string,
+    visibility: Visibility[] | undefined,
+    column: string = 'visibility',
+  ): { sql: string; params: string[] } {
+    if (!visibility || visibility.length === 0) {
+      return { sql: baseSql, params: [] };
+    }
+    const placeholders = visibility.map(() => '?').join(', ');
+    const connector = /\bWHERE\b/i.test(baseSql) ? 'AND' : 'WHERE';
+    return {
+      sql: `${baseSql} ${connector} ${column} IN (${placeholders})`,
+      params: visibility,
     };
   }
 
