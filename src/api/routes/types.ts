@@ -18,6 +18,7 @@ import type { WebSocketHandle } from '../../web/ws-server.js';
 import type { SessionRegistry } from '../../session/session-registry.js';
 import type { ActivityStore } from '../activity-store.js';
 import type { SkillHubStore } from '../skill-hub-store.js';
+import type { SkillHubClientCentral } from '../skill-hub-client-central.js';
 import type { InstanceIdentity } from '../../cluster/identity.js';
 import type { AuditLog } from '../../observability/audit-log.js';
 
@@ -44,6 +45,12 @@ export interface RouteContext {
   sessionRegistry?: SessionRegistry;
   activityStore?: ActivityStore;
   skillHubStore?: SkillHubStore;
+  /**
+   * Phase 2 central pivot — when set, skill-hub routes proxy through the
+   * central server instead of hitting `skillHubStore` directly. Reads fall
+   * back to `skillHubStore` (the cache) when central is unreachable.
+   */
+  skillHubClient?: SkillHubClientCentral;
   auditLog?: AuditLog;
 }
 

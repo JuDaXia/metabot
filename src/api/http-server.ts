@@ -18,6 +18,7 @@ import { VoiceIdentityStore } from './voice-identity.js';
 import { RtcVoiceChatService } from './rtc-voice-chat.js';
 import { ActivityStore } from './activity-store.js';
 import { SkillHubStore } from './skill-hub-store.js';
+import { SkillHubClientCentral } from './skill-hub-client-central.js';
 import { createDefaultAuditLog, type AuditLog } from '../observability/audit-log.js';
 import { metrics as _metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
@@ -58,6 +59,16 @@ interface ApiServerOptions {
   sessionRegistry?: SessionRegistry;
   instance: InstanceIdentity;
   auditLog?: AuditLog;
+  /**
+   * Phase 2 central-architecture pivot. When set, skill-hub routes proxy
+   * through the central server (with read-only cache fallback) instead of
+   * hitting the local SQLite directly.
+   */
+  centralConfig?: {
+    url: string;
+    token: string;
+    fallbackReadonly: boolean;
+  };
 }
 
 const startTime = Date.now();
@@ -78,6 +89,18 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   const voiceIdentityStore = new VoiceIdentityStore(logger);
   const activityStore = new ActivityStore(logger);
   const skillHubStore = new SkillHubStore(path.join(process.cwd(), 'data'), logger);
+  let skillHubClient: SkillHubClientCentral | undefined;
+  if (options.centralConfig) {
+    skillHubClient = new SkillHubClientCentral({
+      centralUrl: options.centralConfig.url,
+      centralToken: options.centralConfig.token,
+      fallbackReadonly: options.centralConfig.fallbackReadonly,
+      clientBot: instance.instanceName,
+      cache: skillHubStore,
+      logger,
+    });
+    logger.info({ centralUrl: options.centralConfig.url }, 'Central skill-hub client wired in (METABOT_BACKEND=central)');
+  }
   const rtcService = new RtcVoiceChatService(logger);
   if (rtcService.isConfigured()) {
     logger.info('RTC voice chat service enabled');
@@ -98,6 +121,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     sessionRegistry: options.sessionRegistry,
     activityStore,
     skillHubStore,
+    ...(skillHubClient ? { skillHubClient } : {}),
     auditLog,
   };
 
