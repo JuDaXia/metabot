@@ -6,7 +6,6 @@ import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { BotRegistry, BotInfo } from '../api/bot-registry.js';
 import type { Logger } from '../utils/logger.js';
 import type { CardState, PendingQuestion } from '../types.js';
-import type { PeerManager } from '../api/peer-manager.js';
 import { ChatSubscriptionManager } from './chat-subscriptions.js';
 import { GroupManager, type ChatGroup } from './group-manager.js';
 import { StreamingASRSession, createStreamingASRSession, isStreamingASRAvailable } from '../api/streaming-asr.js';
@@ -115,7 +114,6 @@ export function setupWebSocketServer(
   registry: BotRegistry,
   logger: Logger,
   secret?: string,
-  peerManager?: PeerManager,
   sessionRegistry?: SessionRegistry,
 ): WebSocketHandle {
   const wsLogger = logger.child({ module: 'ws' });
@@ -171,9 +169,7 @@ export function setupWebSocketServer(
     const chatBotMap = new Map<string, string>();
 
     // Send connected message with bot list
-    const bots = registry.list();
-    const peerBots = peerManager?.getPeerBots() ?? [];
-    sendMessage(ws, { type: 'connected', bots: [...bots, ...peerBots] });
+    sendMessage(ws, { type: 'connected', bots: registry.list() });
 
     // Heartbeat: ping every 30s, close if no pong
     let isAlive = true;
@@ -217,7 +213,7 @@ export function setupWebSocketServer(
         case 'chat':
           chatBotMap.set(msg.chatId, msg.botName);
           subscriptions.subscribe(msg.chatId, ws);
-          handleChat(ws, msg, registry, peerManager, pendingAnswers, wsLogger, subscriptions).catch((err) => {
+          handleChat(ws, msg, registry, pendingAnswers, wsLogger, subscriptions).catch((err) => {
             wsLogger.error({ err, chatId: msg.chatId }, 'WS chat handler error');
             sendMessage(ws, { type: 'error', chatId: msg.chatId, messageId: msg.messageId, error: err.message || 'Internal error' });
           });
@@ -433,9 +429,7 @@ export function setupWebSocketServer(
 
   return {
     broadcastBotList() {
-      const bots = registry.list();
-      const peerBots = peerManager?.getPeerBots() ?? [];
-      const msg = JSON.stringify({ type: 'bots_updated', bots: [...bots, ...peerBots] });
+      const msg = JSON.stringify({ type: 'bots_updated', bots: registry.list() });
       for (const ws of connectedClients) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(msg);
@@ -463,7 +457,6 @@ async function handleChat(
   ws: WebSocket,
   msg: Extract<ClientMessage, { type: 'chat' }>,
   registry: BotRegistry,
-  peerManager: PeerManager | undefined,
   pendingAnswers: Map<string, { resolve: (answer: string) => void; reject: (err: Error) => void }>,
   logger: Logger,
   subscriptions?: ChatSubscriptionManager,
@@ -478,17 +471,7 @@ async function handleChat(
   // Find bot in local registry
   const bot = registry.get(botName);
   if (!bot) {
-    // Try peer bots — but we cannot stream from peers via WS, so reject
-    const peerBot = peerManager?.findBotPeer(botName);
-    if (peerBot) {
-      sendMessage(ws, {
-        type: 'error',
-        chatId,
-        error: `Bot "${botName}" is on a peer instance (${peerBot.peer.name}). WebSocket streaming is only supported for local bots.`,
-      });
-    } else {
-      sendMessage(ws, { type: 'error', chatId, error: `Bot not found: ${botName}` });
-    }
+    sendMessage(ws, { type: 'error', chatId, error: `Bot not found: ${botName}` });
     return;
   }
 

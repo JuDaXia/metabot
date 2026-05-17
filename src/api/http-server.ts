@@ -5,7 +5,6 @@ import type { Logger } from '../utils/logger.js';
 import type { BotRegistry } from './bot-registry.js';
 import type { TaskScheduler } from '../scheduler/task-scheduler.js';
 import type { DocSync } from '../sync/doc-sync.js';
-import type { PeerManager } from './peer-manager.js';
 
 import { AsyncTaskStore } from './async-task-store.js';
 import { setupWebSocketServer, serveStaticFiles, type WebSocketHandle } from '../web/ws-server.js';
@@ -34,8 +33,6 @@ import {
   handleSkillHubRoutes,
   handleManifestRoutes,
   handleExecutorRoutes,
-  handlePeerMemoryRoutes,
-  handleSearchRoutes,
 } from './routes/index.js';
 import type { RouteContext } from './routes/index.js';
 import type { InstanceIdentity } from '../cluster/identity.js';
@@ -49,7 +46,6 @@ interface ApiServerOptions {
   botsConfigPath?: string;
   docSync?: DocSync;
   feishuServiceClient?: lark.Client;
-  peerManager?: PeerManager;
   memoryServerUrl?: string;
   memoryAuthToken?: string;
   circuitBreaker?: CircuitBreaker;
@@ -65,7 +61,7 @@ const startTime = Date.now();
 (globalThis as any).__metabot_start_time = startTime;
 
 export function startApiServer(options: ApiServerOptions): http.Server {
-  const { port, secret, registry, scheduler, logger, botsConfigPath, docSync, feishuServiceClient, peerManager, memoryServerUrl, memoryAuthToken, instance } = options;
+  const { port, secret, registry, scheduler, logger, botsConfigPath, docSync, feishuServiceClient, memoryServerUrl, memoryAuthToken, instance } = options;
   const host = secret ? '0.0.0.0' : '127.0.0.1';
 
   // Initialize shared services
@@ -90,7 +86,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   const ctx: RouteContext = {
     instance,
     registry, scheduler, logger, botsConfigPath, docSync, feishuServiceClient,
-    peerManager, memoryServerUrl, memoryAuthToken,
+    memoryServerUrl, memoryAuthToken,
     asyncTaskStore, intentRouter, circuitBreaker, budgetManager,
     teamManager, meetingService, voiceIdentityStore,
     rtcService: rtcService.isConfigured() ? rtcService : undefined,
@@ -112,26 +108,20 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     handleRtcRoutes,
     handleSessionRoutes,
     handleManifestRoutes,
-    handlePeerMemoryRoutes,
     handleSkillHubRoutes,
     handleExecutorRoutes,
-    handleSearchRoutes,
   ];
 
   const server = http.createServer(async (req, res) => {
     const method = req.method || 'GET';
     const url = req.url || '/';
 
-    // Auth check (exempt /web/, /memory/, /api/files/, /api/manifest, /api/peer-handshake)
-    // /api/peer-handshake is intentionally open: peers exchange tokens here
-    // before they share any other credential. The handshake payload itself
-    // identifies the caller (Pragmatic v1 — see decision_acl_pragmatic_v1.md).
+    // Auth check (exempt /web/, /memory/, /api/files/, /api/manifest)
     if (secret
       && !url.startsWith('/web')
       && !url.startsWith('/memory')
       && !url.startsWith('/api/files/')
       && url !== '/api/manifest'
-      && url !== '/api/peer-handshake'
     ) {
       const auth = req.headers.authorization;
       const urlToken = url.includes('token=') ? new URL(url, `http://${req.headers.host || 'localhost'}`).searchParams.get('token') : null;
@@ -144,16 +134,12 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     try {
       // GET /api/health — always handled here (lightweight)
       if (method === 'GET' && url === '/api/health') {
-        const peerStatuses = peerManager?.getPeerStatuses() ?? [];
         jsonResponse(res, 200, {
           status: 'ok',
           instanceId: instance.instanceId,
           instanceName: instance.instanceName,
           uptime: Math.floor((Date.now() - startTime) / 1000),
           bots: registry.list().length,
-          peerBots: peerManager?.getPeerBots().length ?? 0,
-          peers: peerStatuses.length,
-          peersHealthy: peerStatuses.filter((p) => p.healthy).length,
           scheduledTasks: scheduler.taskCount(),
           recurringTasks: scheduler.recurringTaskCount(),
         });
@@ -180,7 +166,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   });
 
   // Set up WebSocket server for Web UI streaming
-  ws.handle = setupWebSocketServer(server, registry, logger, secret, peerManager, options.sessionRegistry);
+  ws.handle = setupWebSocketServer(server, registry, logger, secret, options.sessionRegistry);
 
   // Wire WebSocket handle to scheduler so scheduled tasks stream updates to clients
   scheduler.setWebSocketHandle(ws.handle);

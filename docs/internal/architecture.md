@@ -14,8 +14,8 @@ Web Browser → WebSocket (/ws) → ws-server.ts → MessageBridge.executeApiTas
 ## Key Modules
 
 - **`src/index.ts`** — Entrypoint. Creates Feishu WS client, fetches bot info for @mention detection, wires up the event dispatcher and bridge, handles graceful shutdown.
-- **`src/config.ts`** — Loads config. `BotConfig` is the per-bot type; `AppConfig` wraps bots, log, instance identity, memory, API, and peers. `loadAppConfig()` reads `BOTS_CONFIG` JSON file or falls back to single-bot mode from env vars. `METABOT_CLUSTER_URL` is added as a bootstrap peer when discovery is enabled.
-- **`src/cluster/identity.ts`** — Loads or creates the stable MetaBot instance identity in `~/.metabot/identity.json` plus an Ed25519 keypair. Exposes `instanceId`, `instanceName`, cluster fields, discovery mode, and default memory namespace.
+- **`src/config.ts`** — Loads config. `BotConfig` is the per-bot type; `AppConfig` wraps bots, log, instance identity, memory, and API. `loadAppConfig()` reads `BOTS_CONFIG` JSON file or falls back to single-bot mode from env vars.
+- **`src/cluster/identity.ts`** — Loads or creates the stable MetaBot instance identity in `~/.metabot/identity.json` plus an Ed25519 keypair. Exposes `instanceId`, `instanceName`, and default memory namespace. (Cross-instance sync now goes through the central archive — see [central-architecture.md](central-architecture.md).)
 - **`src/feishu/event-handler.ts`** — Registers `im.message.receive_v1` on the Lark `EventDispatcher`. Handles text/image parsing, @mention stripping, group chat filtering (only responds when @mentioned, except in 2-member groups which are treated like DMs). Exports `IncomingMessage` type.
 - **`src/bridge/message-bridge.ts`** — Core orchestrator. Routes commands (`/reset`, `/stop`, `/status`, `/help`, `/memory`), manages running tasks per chat (one task at a time per `chatId`), executes Claude queries with streaming card updates, handles image input/output, enforces 1-hour timeout.
 - **`src/memory/memory-client.ts`** — Lightweight HTTP client for the MetaMemory server. Used by `/memory` commands (list, search, status) for quick Feishu responses without spawning Claude.
@@ -26,7 +26,6 @@ Web Browser → WebSocket (/ws) → ws-server.ts → MessageBridge.executeApiTas
 - **`src/feishu/card-builder.ts`** — Builds Feishu interactive card JSON. Cards have color-coded headers (blue=thinking/running, green=complete, red=error), tool call lists, markdown response content, and stats (cost/duration). Content truncated at 28KB.
 - **`src/feishu/message-sender.ts`** — Feishu API wrapper for sending/updating cards, uploading/downloading images, sending text.
 - **`src/bridge/rate-limiter.ts`** — Throttles card updates to avoid Feishu API rate limits (default 1.5s interval). Keeps only the latest pending update.
-- **`src/api/peer-manager.ts`** — Manages cross-instance bot/skill discovery and task forwarding. Polls peer MetaBot instances every 30s, caches their bot and skill lists, supports qualified name routing (`peerName/botName`). Anti-loop via `X-MetaBot-Origin` header.
 - **`src/web/ws-server.ts`** — WebSocket server for the Web UI. Handles upgrade on `/ws`, token auth via `?token=`, heartbeat, and routes `chat`/`stop`/`answer` messages. Also serves static files from `dist/web/` for the SPA.
 
 ## Outputs Directory Pattern
@@ -96,9 +95,9 @@ When Claude enters plan mode and writes a plan to `.claude/plans/*.md`, the plan
 
 ## Skill Hub (Cross-Bot Skill Sharing)
 
-A federated skill registry that allows bots to publish, discover, and install skills across MetaBot instances.
+A skill registry that lets bots publish, discover, and install skills within a MetaBot instance.
 
-**Architecture**: SQLite + FTS5 store (same pattern as MetaMemory/SyncStore). Skills are stored with SKILL.md content + optional `references/` tar bundle plus owner instance metadata, visibility, and content hash. Cross-instance discovery via PeerManager polling.
+**Architecture**: SQLite + FTS5 store (same pattern as MetaMemory/SyncStore). Skills are stored with SKILL.md content + optional `references/` tar bundle plus owner instance metadata, visibility, and content hash.
 
 **Key modules:**
 - **`src/api/skill-hub-store.ts`** — `SkillHubStore` class with SQLite backend. FTS5 full-text search across name, description, tags, and content. Methods: `publish()` (upsert, bumps version and records content hash/owner metadata), `get()`, `list()`, `search()`, `remove()`, `getContent()`.
@@ -107,9 +106,9 @@ A federated skill registry that allows bots to publish, discover, and install sk
 - **`src/skills/skill-hub/SKILL.md`** — Bot-facing skill for autonomous skill discovery and installation.
 
 **API endpoints:**
-- `GET /api/skills` — List all skills (local + peer)
+- `GET /api/skills` — List all skills
 - `GET /api/skills/search?q=` — Full-text search
-- `GET /api/skills/:name` — Get skill details (falls back to peers)
+- `GET /api/skills/:name` — Get skill details
 - `POST /api/skills` — Publish a skill directly (with skillMd in body)
 - `POST /api/skills/:name/publish-from-bot` — Publish from a bot's working directory
 - `POST /api/skills/:name/install` — Install a skill to a bot
@@ -125,21 +124,20 @@ mb skills install <skillName> <botName>    # Install to a bot
 mb skills remove <name>                    # Unpublish
 ```
 
-**Cross-instance**: PeerManager fetches skills alongside bots during 30s polling. Peer skills appear in list/search results with `peerName`/`peerUrl` fields. Install from peer: `mb skills install <skill> <bot> peer:<peerName>`.
+**Cross-instance sharing** goes through the central archive — see [central-architecture.md](central-architecture.md).
 
-## Federated MetaMemory / Skill Hub Foundation
+## MetaMemory / Skill Hub Foundation
 
 MetaBot keeps the user-facing names **MetaMemory** and **Skill Hub**. Internally, both are treated as markdown artifacts with metadata. The current foundation includes:
 
 - Stable instance identity at `~/.metabot/identity.json`
-- `GET /api/manifest` for instance identity, capabilities, endpoint paths, memory namespace, and local/peer counts
+- `GET /api/manifest` for instance identity, capabilities, endpoint paths, and memory namespace
 - `METABOT_MEMORY_NAMESPACE` as an instance fallback at `/instances/<instanceId>`
 - Per-bot stable memory namespaces via `memoryProject` (`/projects/<slug>`) or `memoryNamespace`
 - `MEMORY_INSTANCE_TOKEN` scoped writes to the instance fallback plus configured bot/project namespaces
 - Skill owner metadata: `ownerInstanceId`, `ownerInstanceName`, `visibility`, `contentHash`
-- `METABOT_CLUSTER_URL` bootstrap peer support
 
-The detailed roadmap is in `docs/internal/federated-memory-skill-hub-plan.md`.
+Cross-instance sync runs through the central archive — see [central-architecture.md](central-architecture.md).
 
 ## Session Isolation
 

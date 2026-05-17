@@ -16,7 +16,7 @@ export async function handleBotRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { registry, logger, botsConfigPath, peerManager, memoryServerUrl, memoryAuthToken, ws } = ctx;
+  const { registry, logger, botsConfigPath, memoryServerUrl, memoryAuthToken, ws } = ctx;
 
   // GET /api/bots/:name/profile — detailed bot profile with stats
   if (method === 'GET' && /^\/api\/bots\/[^/]+\/profile$/.test(url)) {
@@ -44,15 +44,7 @@ export async function handleBotRoutes(
 
   // GET /api/bots
   if (method === 'GET' && url === '/api/bots') {
-    const localBots = registry.list();
-    const peerBots = peerManager?.getPeerBots() ?? [];
-    jsonResponse(res, 200, { bots: [...localBots, ...peerBots] });
-    return true;
-  }
-
-  // GET /api/peers
-  if (method === 'GET' && url === '/api/peers') {
-    jsonResponse(res, 200, { peers: peerManager?.getPeerStatuses() ?? [] });
+    jsonResponse(res, 200, { bots: registry.list() });
     return true;
   }
 

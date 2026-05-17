@@ -10,7 +10,7 @@ export async function handleTeamRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { registry, peerManager, intentRouter, circuitBreaker, budgetManager, teamManager, meetingService, voiceIdentityStore } = ctx;
+  const { registry, intentRouter, circuitBreaker, budgetManager, teamManager, meetingService, voiceIdentityStore } = ctx;
 
   // GET /api/activity/events — recent activity events
   if (method === 'GET' && url.startsWith('/api/activity/events')) {
@@ -43,8 +43,7 @@ export async function handleTeamRoutes(
       jsonResponse(res, 400, { error: 'Missing required field: message' });
       return true;
     }
-    const allBots = [...registry.list(), ...(peerManager?.getPeerBots() ?? [])];
-    const result = await intentRouter.route(message, allBots, currentBot);
+    const result = await intentRouter.route(message, registry.list(), currentBot);
     jsonResponse(res, 200, result);
     return true;
   }

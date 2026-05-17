@@ -9,7 +9,7 @@ export async function handleTaskRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { registry, scheduler, logger, peerManager, asyncTaskStore, circuitBreaker, budgetManager, ws } = ctx;
+  const { registry, scheduler, logger, asyncTaskStore, circuitBreaker, budgetManager, ws } = ctx;
 
   // GET /api/talk/:taskId — async task status
   if (method === 'GET' && url.startsWith('/api/talk/')) {
@@ -51,41 +51,9 @@ export async function handleTaskRoutes(
       return true;
     }
 
-    // Parse qualified name: "peerName/botName" or just "botName"
-    let targetPeerName: string | undefined;
-    let botName: string;
-    if (rawBotName.includes('/')) {
-      const parts = rawBotName.split('/');
-      targetPeerName = parts[0];
-      botName = parts.slice(1).join('/');
-    } else {
-      botName = rawBotName;
-    }
+    const botName = rawBotName;
 
-    // If targeting a specific peer, skip local lookup
-    if (targetPeerName) {
-      if (!peerManager) {
-        jsonResponse(res, 404, { error: `No peers configured, cannot resolve: ${rawBotName}` });
-        return true;
-      }
-      const peerMatch = peerManager.findBotOnPeer(targetPeerName, botName);
-      if (!peerMatch) {
-        jsonResponse(res, 404, { error: `Bot not found on peer "${targetPeerName}": ${botName}` });
-        return true;
-      }
-      logger.info({ botName, peerName: targetPeerName, chatId, promptLength: prompt.length }, 'Forwarding talk to peer (qualified)');
-      try {
-        const result = await peerManager.forwardTask(peerMatch.peer, { botName, chatId, prompt, sendCards });
-        const statusCode = (result as any).success === false ? 500 : 200;
-        jsonResponse(res, statusCode, result);
-      } catch (err: any) {
-        logger.error({ err, botName, peerName: targetPeerName }, 'Peer forwarding failed');
-        jsonResponse(res, 502, { error: `Peer forwarding failed: ${err.message}` });
-      }
-      return true;
-    }
-
-    // Try local registry first
+    // Try local registry
     const bot = registry.get(botName);
     if (bot) {
       // Circuit breaker check
@@ -207,24 +175,6 @@ export async function handleTaskRoutes(
 
       jsonResponse(res, result.success ? 200 : 500, result);
       return true;
-    }
-
-    // Bot not found locally — check peers
-    const origin = req.headers['x-metabot-origin'];
-    if (!origin && peerManager) {
-      const peerMatch = peerManager.findBotPeer(botName);
-      if (peerMatch) {
-        logger.info({ botName, peerName: peerMatch.peer.name, peerUrl: peerMatch.peer.url, chatId, promptLength: prompt.length }, 'Forwarding talk to peer');
-        try {
-          const result = await peerManager.forwardTask(peerMatch.peer, { botName, chatId, prompt, sendCards });
-          const statusCode = (result as any).success === false ? 500 : 200;
-          jsonResponse(res, statusCode, result);
-        } catch (err: any) {
-          logger.error({ err, botName, peerUrl: peerMatch.peer.url }, 'Peer forwarding failed');
-          jsonResponse(res, 502, { error: `Peer forwarding failed: ${err.message}` });
-        }
-        return true;
-      }
     }
 
     jsonResponse(res, 404, { error: `Bot not found: ${botName}` });

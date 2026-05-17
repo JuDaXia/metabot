@@ -240,10 +240,9 @@ export class MemoryStorage {
     // Migration: add visibility column if not exists.
     //
     // First-rollout default is 'shared' so pre-existing folders stay visible
-    // to peers after upgrade (backward-compat for the federated P2P era).
-    // New folders created after this rollout default to 'private' — see
-    // `createFolder` below. To make a folder cross-peer visible, mark it
-    // `shared` explicitly (CLI: `mm share <path>`).
+    // after upgrade. New folders default to 'private' — see `createFolder`
+    // below. To make a folder shared, mark it `shared` explicitly
+    // (CLI: `mm share <path>`).
     const cols = this.db.prepare("PRAGMA table_info('folders')").all() as { name: string }[];
     if (!cols.some((c) => c.name === 'visibility')) {
       this.db.exec("ALTER TABLE folders ADD COLUMN visibility TEXT NOT NULL DEFAULT 'shared'");

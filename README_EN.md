@@ -191,7 +191,7 @@ Full-featured browser-based chat interface. Access at `https://your-server/web/`
 | **MetaSkill (opt-in)** | Agent factory. `/metaskill` generates portable agent teams. Not installed by default; enable with `cp -r src/skills/metaskill ~/.claude/skills/` |
 | **Feishu Lark CLI** | 200+ commands covering docs, messaging, calendar, tasks, and 8 more domains. 19 AI Agent Skills |
 | **Skill Hub** | Cross-instance skill sharing registry. `mb skills` to publish, discover, and install skills with FTS5 search |
-| **Peers** | Cross-instance bot discovery and task routing. `mb talk alice/backend-bot` routes automatically |
+| **Central Sync** | Cross-instance sync goes through a central read-only archive — see [docs/internal/central-architecture.md](docs/internal/central-architecture.md) |
 | **Voice Assistant** | Jarvis mode -- "Hey Siri, Jarvis" from AirPods for hands-free agent control |
 
 ## Quick Start
@@ -233,15 +233,12 @@ under /projects/deployment.
 Search MetaMemory for our API design conventions.
 ```
 
-> ⚠️ **Breaking semantic change — Phase 0 default-private folders.** Newly created folders now default to `visibility=private`, meaning **other instances' peer-token readers cannot see them** until you explicitly `mm share` them. Local admin / instance-token reads are **unchanged**, and existing folders are **not** migrated (the SQLite migration keeps them at `visibility=shared`).
+> **Default-private folders.** Newly created folders default to `visibility=private`; mark them shared with `mm share` (or `PUT /api/folders/<id> { "visibility": "shared" }`) so the central archive will mirror them to other instances. See [docs/internal/central-architecture.md](docs/internal/central-architecture.md).
 >
 > ```bash
-> mm share /projects/our-team          # opt in: peer instances can read
+> mm share /projects/our-team          # opt in: other instances can read
 > mm unshare /projects/our-team        # revoke
-> # or PUT /api/folders/<id>  body: { "visibility": "shared" | "private" }
 > ```
->
-> This is the safer default in the P2P-federation era while the centralized architecture (Phase 2–3) is being built — new folders no longer become visible to every MetaBot on the LAN the instant they're created.
 
 ### Scheduling (Claude Code native)
 
@@ -398,7 +395,6 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 | `VOLCENGINE_TTS_ACCESS_KEY` | — | Doubao voice key |
 | `METABOT_URL` | `http://localhost:9100` | MetaBot API URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
 | `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory server URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
-| `METABOT_PEERS` | — | Peer MetaBot URLs (comma-separated). Prefer HTTPS for internet-reachable peers |
 | `LOG_LEVEL` | info | Log level |
 
 </details>
@@ -463,11 +459,10 @@ MetaBot runs Claude Code in `bypassPermissions` mode — no interactive approval
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/bots` | List bots (local + peer) |
+| `GET` | `/api/bots` | List bots |
 | `POST` | `/api/bots` | Create bot at runtime |
 | `DELETE` | `/api/bots/:name` | Remove bot |
-| `POST` | `/api/talk` | Talk to a bot (auto-routes to peers) |
-| `GET` | `/api/peers` | List peers and status |
+| `POST` | `/api/talk` | Talk to a bot |
 | `POST` | `/api/schedule` | Schedule task |
 | `GET` | `/api/schedule` | List scheduled tasks |
 | `PATCH` | `/api/schedule/:id` | Update task |
@@ -476,7 +471,7 @@ MetaBot runs Claude Code in `bypassPermissions` mode — no interactive approval
 | `GET` | `/api/stats` | Cost & usage stats |
 | `GET` | `/api/metrics` | Prometheus metrics |
 | `POST` | `/api/tts` | Text-to-speech |
-| `GET` | `/api/skills` | List skills (local + peer) |
+| `GET` | `/api/skills` | List skills |
 | `GET` | `/api/skills/search?q=` | Full-text search skills |
 | `GET` | `/api/skills/:name` | Get skill details |
 | `POST` | `/api/skills` | Publish a skill |

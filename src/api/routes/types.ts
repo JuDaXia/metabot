@@ -4,7 +4,6 @@ import type { Logger } from '../../utils/logger.js';
 import type { BotRegistry } from '../bot-registry.js';
 import type { TaskScheduler } from '../../scheduler/task-scheduler.js';
 import type { DocSync } from '../../sync/doc-sync.js';
-import type { PeerManager } from '../peer-manager.js';
 
 import type { AsyncTaskStore } from '../async-task-store.js';
 import type { IntentRouter } from '../intent-router.js';
@@ -29,7 +28,6 @@ export interface RouteContext {
   botsConfigPath?: string;
   docSync?: DocSync;
   feishuServiceClient?: lark.Client;
-  peerManager?: PeerManager;
   memoryServerUrl?: string;
   memoryAuthToken?: string;
   asyncTaskStore: AsyncTaskStore;

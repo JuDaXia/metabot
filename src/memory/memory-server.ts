@@ -21,16 +21,6 @@ import {
   handleHealth,
 } from './memory-routes.js';
 
-export interface PeerTokenLookup {
-  /**
-   * Given a bearer token presented on /api/* by an inbound request, return
-   * the peer's identity if the token matches a registered peer's reader
-   * token. Used to authenticate cross-instance reads as Pragmatic v1 reader
-   * principals (see decision_acl_pragmatic_v1.md).
-   */
-  (token: string): { instanceId?: string; peerName: string } | undefined;
-}
-
 export interface MemoryServerOptions {
   port: number;
   databaseDir: string;
@@ -41,13 +31,6 @@ export interface MemoryServerOptions {
   instanceId?: string;
   memoryNamespace?: string;
   memoryNamespaces?: string[];
-  /**
-   * Optional lookup that resolves bearer tokens shared by known peers during
-   * the auto-handshake (see PeerManager). When set, matching tokens authenticate
-   * as a Pragmatic v1 reader principal — read path stays gated by folder
-   * visibility, no grants are written.
-   */
-  peerTokenLookup?: PeerTokenLookup;
   /**
    * Optional audit log to record every /api/* request (op, path, principal,
    * source IP, status, latency). When omitted, the server builds one with
@@ -162,7 +145,7 @@ function resolveStaticDir(): string {
 }
 
 export function startMemoryServer(options: MemoryServerOptions): { server: http.Server; storage: MemoryStorage; auditLog: AuditLog } {
-  const { port, databaseDir, secret, adminToken, readerToken, instanceToken, instanceId, memoryNamespace, memoryNamespaces, peerTokenLookup, logger } = options;
+  const { port, databaseDir, secret, adminToken, readerToken, instanceToken, instanceId, memoryNamespace, memoryNamespaces, logger } = options;
   const storage = new MemoryStorage(databaseDir, logger);
   const auditLog = options.auditLog ?? createDefaultAuditLog(logger);
   const staticDir = resolveStaticDir();
@@ -172,11 +155,8 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
       ? [memoryNamespace]
       : [];
 
-  // Auth is enabled if any token is configured OR a peer-token lookup is in
-  // play. Peer-token auth alone is enough to gate /api/* — without it, the
-  // server would still answer as admin (unauthenticated) which would defeat
-  // the handshake we just added.
-  const authEnabled = !!(adminToken || readerToken || instanceToken || secret || peerTokenLookup);
+  // Auth is enabled if any token is configured.
+  const authEnabled = !!(adminToken || readerToken || instanceToken || secret);
 
   /** Resolve role from Authorization header.
    *  - adminToken → 'admin'
@@ -199,18 +179,6 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
         instanceId,
         grants: writableNamespaces.map((namespace) => ({ namespace, access: 'write' as const })),
       };
-    }
-    // Pragmatic v1 — known peer presents its reader token from handshake.
-    // Read path stays gated by folder visibility; no grants attached, so
-    // private folders remain unreadable.
-    if (peerTokenLookup) {
-      const peer = peerTokenLookup(token);
-      if (peer) {
-        return {
-          role: 'reader',
-          ...(peer.instanceId ? { instanceId: peer.instanceId } : {}),
-        };
-      }
     }
     // Legacy: old secret token gets admin access for backward compat
     if (secret && token === secret) return 'admin';

@@ -58,7 +58,7 @@ export async function handleSkillHubRoutes(
   method: string,
   url: string,
 ): Promise<boolean> {
-  const { logger, registry, peerManager, instance } = ctx;
+  const { logger, registry, instance } = ctx;
   const store = ctx.skillHubStore;
 
   if (!url.startsWith('/api/skills')) return false;
@@ -89,20 +89,7 @@ export async function handleSkillHubRoutes(
     const query = params.get('q') || '';
     const visibility = visibilityFilterForRequest(req);
     const localResults = store.search(query, visibility ? { visibility } : undefined);
-    // Include peer skills if not a peer request
-    const isPeer = req.headers['x-metabot-origin'] === 'peer';
-    if (!isPeer && peerManager) {
-      const peerSkills = peerManager.getPeerSkills?.() ?? [];
-      const filtered = query
-        ? peerSkills.filter((s) => {
-            const q = query.toLowerCase();
-            return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || s.tags.some((t) => t.toLowerCase().includes(q));
-          })
-        : peerSkills;
-      jsonResponse(res, 200, { skills: [...localResults, ...filtered.map((s) => ({ ...s, snippet: '' }))] });
-    } else {
-      jsonResponse(res, 200, { skills: localResults });
-    }
+    jsonResponse(res, 200, { skills: localResults });
     return true;
   }
 
@@ -176,35 +163,14 @@ export async function handleSkillHubRoutes(
       return true;
     }
 
-    const source = (body.source as string) || 'local';
-
-    let skillMd: string;
-    let referencesTar: Buffer | undefined;
-
-    if (source.startsWith('peer:')) {
-      // Fetch from peer
-      const peerName = source.slice(5);
-      if (!peerManager?.fetchPeerSkill) {
-        jsonResponse(res, 400, { error: 'Peer manager not available' });
-        return true;
-      }
-      const peerSkill = await peerManager.fetchPeerSkill(peerName, skillName);
-      if (!peerSkill) {
-        jsonResponse(res, 404, { error: `Skill "${skillName}" not found on peer "${peerName}"` });
-        return true;
-      }
-      skillMd = peerSkill.skillMd;
-      referencesTar = peerSkill.referencesTar;
-    } else {
-      // Fetch from local store
-      const content = store.getContent(skillName);
-      if (!content) {
-        jsonResponse(res, 404, { error: `Skill not found: ${skillName}` });
-        return true;
-      }
-      skillMd = content.skillMd;
-      referencesTar = content.referencesTar;
+    // Fetch from local store
+    const content = store.getContent(skillName);
+    if (!content) {
+      jsonResponse(res, 404, { error: `Skill not found: ${skillName}` });
+      return true;
     }
+    const skillMd = content.skillMd;
+    const referencesTar = content.referencesTar;
 
     const workDir = bot.config.claude.defaultWorkingDirectory;
     installSkillFromHub(workDir, skillName, skillMd, referencesTar, logger);
@@ -220,25 +186,11 @@ export async function handleSkillHubRoutes(
     if (record) {
       const visibility = visibilityFilterForRequest(req);
       if (visibility && !visibility.includes(record.visibility)) {
-        // Peer asked for a name they shouldn't even know exists — 404, not 403.
         jsonResponse(res, 404, { error: `Skill not found: ${skillName}` });
         return true;
       }
       jsonResponse(res, 200, record);
       return true;
-    }
-    // Try peers
-    if (peerManager?.fetchPeerSkill) {
-      // Search through peer skills to find which peer has it
-      const peerSkills = peerManager.getPeerSkills?.() ?? [];
-      const match = peerSkills.find((s) => s.name === skillName);
-      if (match) {
-        const full = await peerManager.fetchPeerSkill(match.peerName, skillName);
-        if (full) {
-          jsonResponse(res, 200, { ...full, peerName: match.peerName, peerUrl: match.peerUrl });
-          return true;
-        }
-      }
     }
     jsonResponse(res, 404, { error: `Skill not found: ${skillName}` });
     return true;
@@ -248,14 +200,7 @@ export async function handleSkillHubRoutes(
   if (method === 'GET' && (url === '/api/skills' || url.startsWith('/api/skills?'))) {
     if (!store) { jsonResponse(res, 503, { error: 'Skill Hub not available' }); return true; }
     const visibility = visibilityFilterForRequest(req);
-    const localSkills = store.list(visibility ? { visibility } : undefined);
-    const isPeer = req.headers['x-metabot-origin'] === 'peer';
-    if (!isPeer && peerManager?.getPeerSkills) {
-      const peerSkills = peerManager.getPeerSkills();
-      jsonResponse(res, 200, { skills: [...localSkills, ...peerSkills] });
-    } else {
-      jsonResponse(res, 200, { skills: localSkills });
-    }
+    jsonResponse(res, 200, { skills: store.list(visibility ? { visibility } : undefined) });
     return true;
   }
 

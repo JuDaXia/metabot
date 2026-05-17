@@ -108,12 +108,6 @@ export interface WechatBotConfig extends BotConfigBase {
   };
 }
 
-export interface PeerConfig {
-  name: string;
-  url: string;
-  secret?: string;
-}
-
 export interface AppConfig {
   instance: InstanceIdentity;
   feishuBots: BotConfig[];
@@ -144,8 +138,6 @@ export interface AppConfig {
     namespace: string;
     namespaces: string[];
   };
-  /** Peer MetaBot instances for cross-instance bot discovery and task delegation. */
-  peers: PeerConfig[];
 }
 
 function required(name: string): string {
@@ -506,18 +498,11 @@ function wechatBotFromEnv(): WechatBotConfig {
 
 // --- New bots.json format ---
 
-export interface PeerJsonEntry {
-  name: string;
-  url: string;
-  secret?: string;
-}
-
 export interface BotsJsonNewFormat {
   feishuBots?: FeishuBotJsonEntry[];
   telegramBots?: TelegramBotJsonEntry[];
   webBots?: WebBotJsonEntry[];
   wechatBots?: WechatBotJsonEntry[];
-  peers?: PeerJsonEntry[];
 }
 
 export function loadAppConfig(): AppConfig {
@@ -527,13 +512,11 @@ export function loadAppConfig(): AppConfig {
   let telegramBots: TelegramBotConfig[] = [];
   let webBots: BotConfigBase[] = [];
   let wechatBots: WechatBotConfig[] = [];
-  let parsedConfig: unknown;
 
   if (botsConfigPath) {
     const resolved = path.resolve(botsConfigPath);
     const raw = fs.readFileSync(resolved, 'utf-8');
     const parsed = JSON.parse(raw);
-    parsedConfig = parsed;
 
     if (Array.isArray(parsed)) {
       // Old format: array of feishu bot entries (backward compatible)
@@ -628,40 +611,6 @@ export function loadAppConfig(): AppConfig {
   ].map(normalizeMemoryNamespace)));
   process.env.METABOT_MEMORY_NAMESPACES = memoryNamespaces.join(',');
 
-  // Parse peers from JSON config and/or env vars
-  const peers: PeerConfig[] = [];
-  if (botsConfigPath && parsedConfig && !Array.isArray(parsedConfig)) {
-    const cfg = parsedConfig as BotsJsonNewFormat;
-    if (cfg.peers) {
-      for (const p of cfg.peers) {
-        peers.push({ name: p.name, url: p.url.replace(/\/+$/, ''), secret: p.secret });
-      }
-    }
-  }
-  if (process.env.METABOT_PEERS) {
-    const urls = process.env.METABOT_PEERS.split(',').map((u) => u.trim()).filter(Boolean);
-    const secrets = (process.env.METABOT_PEER_SECRETS || '').split(',').map((s) => s.trim());
-    const names = (process.env.METABOT_PEER_NAMES || '').split(',').map((s) => s.trim());
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i].replace(/\/+$/, '');
-      if (!peers.some((p) => p.url === url)) {
-        const autoName = names[i] || url.replace(/^https?:\/\//, '').replace(/[:.]/g, '-');
-        peers.push({ name: autoName, url, secret: secrets[i] || undefined });
-      }
-    }
-  }
-  if (instance.clusterUrl && instance.discoveryMode !== 'off') {
-    const url = instance.clusterUrl.replace(/\/+$/, '');
-    if (!peers.some((p) => p.url === url)) {
-      const name = instance.clusterId || url.replace(/^https?:\/\//, '').replace(/[:.]/g, '-');
-      peers.push({
-        name,
-        url,
-        secret: process.env.METABOT_CLUSTER_SECRET || undefined,
-      });
-    }
-  }
-
   return {
     instance,
     feishuBots,
@@ -688,6 +637,5 @@ export function loadAppConfig(): AppConfig {
       namespace: instance.memoryNamespace,
       namespaces: memoryNamespaces,
     },
-    peers,
   };
 }
