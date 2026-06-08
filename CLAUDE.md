@@ -101,6 +101,7 @@ Slim summary only — see [docs/internal/architecture.md](docs/internal/architec
 
 - **Single-bot mode** (default): `.env` with `FEISHU_APP_ID` + `FEISHU_APP_SECRET` (see `.env.example`).
 - **Multi-bot mode**: `BOTS_CONFIG=./bots.json` runs multiple bots in one process (see `bots.example.json`). When set, the `FEISHU_APP_*` env vars are ignored.
+- **Feishu QR onboarding** (multi-bot mode): `mb feishu setup <name> <workdir> [--domain feishu|lark]` runs a device-code flow (`POST/GET/DELETE /api/feishu/onboard`, [src/api/routes/feishu-onboard-routes.ts](src/api/routes/feishu-onboard-routes.ts)) — scan the terminal QR with the Feishu/Lark app and the platform auto-creates the bot app, writes it to `bots.json`, and **hot-activates it without a restart** (shared `startFeishuBot` in [src/feishu/feishu-bot-runner.ts](src/feishu/feishu-bot-runner.ts)). Core flow ported from hermes-agent into [src/feishu/qr-onboard.ts](src/feishu/qr-onboard.ts).
 - **PersistentClaudeExecutor** (opt-in): `METABOT_PERSISTENT_EXECUTOR=true` keeps one long-lived `query()` per `chatId` so subagents / Agent Teams / `/background` / `/goal` survive across turns. Per-bot override via `persistentExecutor` in `bots.json`. Observability at `GET /api/executors`.
 - **MetaMemory**: external FastAPI+SQLite server at `META_MEMORY_URL` (default `http://localhost:8100`). Claude reads/writes via the `metamemory` skill; `/memory list|search|status` query directly.
 

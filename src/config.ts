@@ -83,6 +83,8 @@ export interface BotConfig extends BotConfigBase {
   feishu: {
     appId: string;
     appSecret: string;
+    /** Open-platform domain: "feishu" (China) or "lark" (International). Defaults to "feishu". */
+    domain?: 'feishu' | 'lark';
   };
   /** When true, respond to all messages in group chats without requiring @mention. */
   groupNoMention?: boolean;
@@ -199,6 +201,8 @@ export interface FeishuBotJsonEntry extends EngineJsonFields {
   ttsVoice?: string;
   feishuAppId: string;
   feishuAppSecret: string;
+  /** Open-platform domain: "feishu" (China) or "lark" (International). Defaults to "feishu". */
+  domain?: 'feishu' | 'lark';
   defaultWorkingDirectory: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
@@ -210,7 +214,7 @@ export interface FeishuBotJsonEntry extends EngineJsonFields {
   groupNoMention?: boolean;
 }
 
-function feishuBotFromJson(entry: FeishuBotJsonEntry): BotConfig {
+export function feishuBotFromJson(entry: FeishuBotJsonEntry): BotConfig {
   const codex = buildCodexConfig(entry.codex);
   return {
     name: entry.name,
@@ -227,6 +231,7 @@ function feishuBotFromJson(entry: FeishuBotJsonEntry): BotConfig {
     feishu: {
       appId: entry.feishuAppId,
       appSecret: entry.feishuAppSecret,
+      ...(entry.domain ? { domain: entry.domain } : {}),
     },
     claude: buildClaudeConfig(entry),
   };

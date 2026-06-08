@@ -213,6 +213,17 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 
 ### 飞书
 
+**推荐：扫码自动创建（`mb feishu setup`）** — 一条命令，扫码即自动创建并热激活机器人，无需手动建应用、填凭证：
+
+```bash
+mb feishu setup my-bot ~/projects/my-bot                  # 飞书（国内）
+mb feishu setup my-bot ~/projects/my-bot --domain lark    # Lark（国际版）
+```
+
+终端会显示二维码，用飞书 / Lark App 扫码授权后，平台自动创建一个机器人应用，凭证写入 `bots.json` 并**热激活（无需重启）**。需先设置 `BOTS_CONFIG`（多 Bot 模式）。
+
+**手动方式**（无法扫码时）：
+
 1. [open.feishu.cn](https://open.feishu.cn/) 创建应用 → 添加「机器人」能力
 2. 开通权限：`im:message`、`im:message:readonly`、`im:resource`、`im:chat:readonly`
 3. 先启动 MetaBot，再开启「长连接」+ `im.message.receive_v1` 事件

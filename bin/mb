@@ -571,6 +571,84 @@ print(json.dumps(body))
       fi
     fi
     ;;
+  # --- Feishu / Lark QR onboarding ---
+  feishu)
+    _sub="${1:-}"; shift 2>/dev/null || true
+    case "$_sub" in
+      setup)
+        _name="${1:-}"; _workdir="${2:-}"; shift 2 2>/dev/null || true
+        _engine=""; _domain="feishu"; _model=""; _desc=""; _skills="false"
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --engine)      _engine="$2"; shift 2 ;;
+            --domain)      _domain="$2"; shift 2 ;;
+            --model)       _model="$2"; shift 2 ;;
+            --description) _desc="$2"; shift 2 ;;
+            --skills)      _skills="true"; shift ;;
+            *) echo "Unknown flag: $1"; exit 1 ;;
+          esac
+        done
+        if [[ -z "$_name" || -z "$_workdir" ]]; then
+          echo "Usage: mb feishu setup <name> <workdir> [--domain feishu|lark] [--engine claude] [--model M] [--description D] [--skills]"
+          exit 1
+        fi
+
+        _body=$(python3 -c "
+import json, sys
+b = {'name': sys.argv[1], 'defaultWorkingDirectory': sys.argv[2], 'domain': sys.argv[3]}
+if sys.argv[4]: b['engine'] = sys.argv[4]
+if sys.argv[5]: b['model'] = sys.argv[5]
+if sys.argv[6]: b['description'] = sys.argv[6]
+if sys.argv[7] == 'true': b['installSkills'] = True
+print(json.dumps(b))
+" "$_name" "$_workdir" "$_domain" "$_engine" "$_model" "$_desc" "$_skills")
+
+        _resp=$(curl -s -X POST "$METABOT_URL/api/feishu/onboard" \
+          -H "$METABOT_AUTH" -H "Content-Type: application/json" -d "$_body")
+
+        _sid=$(printf '%s' "$_resp" | python3 -c "import json,sys;print(json.load(sys.stdin).get('sessionId',''))" 2>/dev/null || true)
+        if [[ -z "$_sid" ]]; then
+          echo "Error starting Feishu onboarding:"
+          printf '%s\n' "$_resp" | _json
+          exit 1
+        fi
+
+        printf '%s' "$_resp" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+qr = d.get('qrTerminal')
+if qr:
+    print(qr)
+print('  Scan the QR with the Feishu / Lark app, or open this URL on your phone:')
+print('  ' + d.get('qrUrl', ''))
+print()
+print('  Waiting for scan...')
+"
+        _interval=$(printf '%s' "$_resp" | python3 -c "import json,sys;print(json.load(sys.stdin).get('interval',5))" 2>/dev/null || echo 5)
+
+        while true; do
+          sleep "$_interval"
+          _st=$(curl -s -H "$METABOT_AUTH" "$METABOT_URL/api/feishu/onboard/$_sid")
+          _status=$(printf '%s' "$_st" | python3 -c "import json,sys;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+          case "$_status" in
+            success)
+              _bn=$(printf '%s' "$_st" | python3 -c "import json,sys;print(json.load(sys.stdin).get('botName',''))" 2>/dev/null || true)
+              echo "✅ Bot created and activated: ${_bn:-$_name}"
+              exit 0 ;;
+            failed|expired)
+              _err=$(printf '%s' "$_st" | python3 -c "import json,sys;print(json.load(sys.stdin).get('error',''))" 2>/dev/null || true)
+              echo "❌ Feishu onboarding $_status: ${_err:-unknown error}"
+              exit 1 ;;
+            *)
+              : ;;  # pending — keep waiting
+          esac
+        done
+        ;;
+      *)
+        echo "Usage: mb feishu setup <name> <workdir> [--domain feishu|lark] [--engine claude] [--model M] [--description D] [--skills]"
+        exit 1 ;;
+    esac
+    ;;
   # --- Help ---
   *)
     echo "mb - MetaBot API CLI"
@@ -578,6 +656,7 @@ print(json.dumps(body))
     echo "  Bots:"
     echo "    mb bots                          - List all bots (local + peer)"
     echo "    mb bot <name>                    - Get bot details"
+    echo "    mb feishu setup <name> <workdir> - Scan a QR to auto-create & activate a Feishu/Lark bot"
     echo ""
     echo "  Agent Talk:"
     echo "    mb talk <bot> <chatId> <prompt>  - Talk to a bot (auto-routes to peers)"

@@ -12,6 +12,8 @@ export interface RegisteredBot {
   sender: IMessageSender;
   /** Feishu SDK client (only for feishu platform bots). */
   feishuClient?: lark.Client;
+  /** Feishu WebSocket client (only for hot-activated feishu bots). */
+  wsClient?: lark.WSClient;
 }
 
 /** Public DTO returned by list() — no secrets or internal refs. */

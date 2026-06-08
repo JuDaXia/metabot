@@ -209,6 +209,17 @@ Full-featured browser-based chat interface. Access at `https://your-server/web/`
 
 ### Feishu/Lark
 
+**Recommended: scan-to-create (`mb feishu setup`)** — one command, scan a QR, and the bot is auto-created and hot-activated. No manual app creation or credential copy-paste:
+
+```bash
+mb feishu setup my-bot ~/projects/my-bot                  # Feishu (China)
+mb feishu setup my-bot ~/projects/my-bot --domain lark    # Lark (International)
+```
+
+A QR code is printed in the terminal. Scan it with the Feishu / Lark app to authorize; the platform auto-creates a bot application, writes the credentials to `bots.json`, and **hot-activates the bot (no restart)**. Requires `BOTS_CONFIG` (multi-bot mode).
+
+**Manual** (if you can't scan):
+
 1. Create app at [open.feishu.cn](https://open.feishu.cn/) → add Bot capability
 2. Enable permissions: `im:message`, `im:message:readonly`, `im:resource`, `im:chat:readonly`
 3. Start MetaBot, then enable persistent connection + `im.message.receive_v1` event
