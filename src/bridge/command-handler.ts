@@ -5,6 +5,7 @@ import type { IMessageSender } from './message-sender.interface.js';
 import { resolveEngineName, SessionManager } from '../engines/index.js';
 import type { EngineName } from '../engines/index.js';
 import { getModelsForEngine } from '../engines/model-catalog.js';
+import { parseEffort, EFFORT_LEVELS } from '../engines/types.js';
 import { MemoryClient } from '../memory/memory-client.js';
 import { AuditLogger } from '../utils/audit-logger.js';
 import type { DocSync } from '../sync/doc-sync.js';
@@ -63,6 +64,7 @@ export class CommandHandler {
           '`/model` - Show current engine/model; `/model list` - Available options',
           '`/model claude`, `/model kimi`, or `/model codex` - Switch engine (resets session)',
           '`/model <name>` - Set model for current engine',
+          '`/effort` - Show effort; `/effort low|medium|high|xhigh|max` - Set reasoning effort (Claude); `/effort reset` - clear',
           '`/memory` - Memory document commands',
           '`/help` - Show this help message',
           '',
@@ -140,6 +142,9 @@ export class CommandHandler {
           `**Working Directory:** \`${session.workingDirectory}\``,
           `**Session:** ${session.sessionId ? `\`${session.sessionId.slice(0, 8)}...\`` : '_None_'}`,
           `**Model:** \`${activeModel}\`${session.model ? ' (session override)' : ''}`,
+          ...(activeEngine === 'claude'
+            ? [`**Effort:** \`${session.effort ?? this.config.claude.effort ?? 'model default'}\`${session.effort ? ' (session override)' : ''}`]
+            : []),
           `**Running:** ${isRunning ? 'Yes ⏳' : 'No'}`,
         ].join('\n'));
         return true;
@@ -160,6 +165,12 @@ export class CommandHandler {
       case '/model': {
         const args = text.slice('/model'.length).trim();
         await this.handleModelCommand(chatId, args);
+        return true;
+      }
+
+      case '/effort': {
+        const args = text.slice('/effort'.length).trim();
+        await this.handleEffortCommand(chatId, args);
         return true;
       }
 
@@ -394,6 +405,75 @@ export class CommandHandler {
       chatId,
       '✅ Model Set',
       `Session model set to \`${newModel}\` on engine \`${activeEngine}\`. It will take effect on the next message.`,
+      'green',
+    );
+  }
+
+  /**
+   * /effort — show or set the per-session Claude reasoning-effort override.
+   * Mirrors /model but effort is Claude-only and has no engine dimension.
+   * Precedence: session override (here) > bot config (CLAUDE_EFFORT / bots.json
+   * claude.effort) > the model's own default.
+   */
+  private async handleEffortCommand(chatId: string, args: string): Promise<void> {
+    const session = this.sessionManager.getSession(chatId);
+    const activeEngine = session.engine ?? resolveEngineName(this.config);
+    const botDefault = this.config.claude.effort;
+    const effective = session.effort ?? botDefault;
+
+    // No args — show current effort + usage
+    if (!args) {
+      const origin = session.effort ? ' (session override)' : botDefault ? ' (bot default)' : '';
+      const lines = [
+        `**Effort:** \`${effective ?? 'model default'}\`${origin}`,
+        '',
+        'Reasoning effort controls how much thinking Claude spends — `low` is fastest/cheapest, `max` is deepest.',
+        `Levels: ${EFFORT_LEVELS.map((l) => `\`${l}\``).join(' · ')} _(higher levels are model-gated; unsupported ones are silently downgraded)._`,
+        '',
+        'Usage:',
+        '- `/effort <level>` — Set the level for this chat',
+        '- `/effort reset` — Clear the override, use the bot default',
+      ];
+      if (activeEngine !== 'claude') {
+        lines.push('', `_Note: effort only applies to the Claude engine; this chat is currently on \`${activeEngine}\`._`);
+      }
+      await this.sender.sendTextNotice(chatId, '🧠 Effort', lines.join('\n'));
+      return;
+    }
+
+    const normalized = args.split(/\s+/)[0].toLowerCase();
+
+    // Reset — clear the override
+    if (normalized === 'reset' || normalized === 'clear' || normalized === 'default') {
+      this.sessionManager.setSessionEffort(chatId, undefined);
+      await this.sender.sendTextNotice(
+        chatId,
+        '✅ Effort Reset',
+        `Session effort override cleared. Using bot default: \`${botDefault ?? 'model default'}\`.`,
+        'green',
+      );
+      return;
+    }
+
+    // Set — validate against the known levels
+    const level = parseEffort(normalized);
+    if (!level) {
+      await this.sender.sendTextNotice(
+        chatId,
+        '⚠️ Invalid Effort',
+        `\`${normalized}\` is not a valid effort level. Choose one of: ${EFFORT_LEVELS.map((l) => `\`${l}\``).join(', ')}.`,
+        'orange',
+      );
+      return;
+    }
+    this.sessionManager.setSessionEffort(chatId, level);
+    const note = activeEngine === 'claude'
+      ? 'It will take effect on your next message.'
+      : `Saved, but this chat is on the \`${activeEngine}\` engine — effort only applies to Claude.`;
+    await this.sender.sendTextNotice(
+      chatId,
+      '✅ Effort Set',
+      `Session reasoning effort set to \`${level}\`. ${note}`,
       'green',
     );
   }

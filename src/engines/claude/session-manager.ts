@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { Logger } from '../../utils/logger.js';
-import type { EngineName } from '../types.js';
+import type { EngineName, EffortLevel } from '../types.js';
 
 export interface UserSession {
   sessionId: string | undefined;
@@ -20,6 +20,9 @@ export interface UserSession {
   model?: string;
   /** Engine that owns model. Model names are engine-specific. */
   modelEngine?: EngineName;
+  /** Per-session Claude reasoning-effort override (set via /effort). Falls back to
+   *  bot config / CLAUDE_EFFORT, then the model default, when undefined. */
+  effort?: EffortLevel;
   /** Per-session engine override. Falls back to bot default when undefined. */
   engine?: EngineName;
   /**
@@ -42,6 +45,7 @@ interface PersistedSession {
   cumulativeDurationMs?: number;
   model?: string;
   modelEngine?: EngineName;
+  effort?: EffortLevel;
   engine?: EngineName;
   activeGoal?: string;
   goalSetAt?: number;
@@ -131,6 +135,14 @@ export class SessionManager {
     this.saveToDisk();
   }
 
+  /** Set per-session Claude reasoning-effort override. Pass undefined to clear. */
+  setSessionEffort(chatId: string, effort: EffortLevel | undefined): void {
+    const session = this.getSession(chatId);
+    session.effort = effort;
+    this.logger.info({ chatId, effort }, 'Session effort override updated');
+    this.saveToDisk();
+  }
+
   /**
    * Set per-session engine override. Pass undefined to clear and fall back
    * to the bot's configured engine. Switching engines also clears the prior
@@ -211,8 +223,8 @@ export class SessionManager {
     try {
       const data: Record<string, PersistedSession> = {};
       for (const [chatId, session] of this.sessions) {
-        // Persist sessions that have a sessionId, model, engine override, or active goal
-        if (session.sessionId || session.model || session.engine || session.activeGoal) {
+        // Persist sessions that have a sessionId, model, effort, engine override, or active goal
+        if (session.sessionId || session.model || session.effort || session.engine || session.activeGoal) {
           data[chatId] = {
             sessionId: session.sessionId || '',
             sessionIdEngine: session.sessionIdEngine,
@@ -223,6 +235,7 @@ export class SessionManager {
             cumulativeDurationMs: session.cumulativeDurationMs,
             model: session.model,
             modelEngine: session.modelEngine,
+            effort: session.effort,
             engine: session.engine,
             activeGoal: session.activeGoal,
             goalSetAt: session.goalSetAt,
@@ -255,6 +268,7 @@ export class SessionManager {
           cumulativeDurationMs: persisted.cumulativeDurationMs ?? 0,
           model: persisted.model,
           modelEngine: persisted.modelEngine,
+          effort: persisted.effort,
           engine: persisted.engine,
           activeGoal: persisted.activeGoal,
           goalSetAt: persisted.goalSetAt,

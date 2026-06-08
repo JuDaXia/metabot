@@ -14,6 +14,25 @@ import type { StreamProcessor } from './claude/stream-processor.js';
 export type EngineName = 'claude' | 'kimi' | 'codex';
 
 /**
+ * Reasoning-effort level for Claude, passed straight through to the Agent SDK
+ * `query({ options: { effort } })`. Controls how much thinking Claude spends:
+ * `low` fastest/cheapest … `max` deepest. Higher levels (`xhigh`/`max`) are
+ * model-gated; the SDK silently downgrades unsupported levels for the active
+ * model. `undefined` = don't set it (use the model's own default). */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** Validate/normalise an arbitrary string into an EffortLevel, or undefined. */
+export function parseEffort(value: string | undefined | null): EffortLevel | undefined {
+  if (!value) return undefined;
+  const v = value.trim().toLowerCase();
+  return (EFFORT_LEVELS as readonly string[]).includes(v) ? (v as EffortLevel) : undefined;
+}
+
+export { EFFORT_LEVELS };
+
+/**
  * An Engine is a programmable agent backend (Claude Code, Kimi Code, …).
  * It produces an Executor that the bridge drives for a single chat session.
  *

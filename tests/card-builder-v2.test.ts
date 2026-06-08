@@ -260,6 +260,20 @@ describe('buildCardV2', () => {
     expect(inner).toContain('ctx:');
   });
 
+  it('shows reasoning effort next to the model in the footer', () => {
+    const state: CardState = {
+      status:        'complete',
+      userPrompt:    'task',
+      responseText:  'done',
+      toolCalls:     [],
+      durationMs:    1000,
+      model:         'claude-opus-4-8[1m]',
+      effort:        'high',
+    };
+    const footer = findElements(JSON.parse(buildCardV2(state))).find((e) => e.tag === 'column_set');
+    expect(JSON.stringify(footer)).toContain('opus-4-8[1m] · high');
+  });
+
   it('truncates long content', () => {
     const state: CardState = {
       status:       'complete',

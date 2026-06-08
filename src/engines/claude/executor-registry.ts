@@ -15,6 +15,7 @@
 import { EventEmitter } from 'node:events';
 import type { Logger } from '../../utils/logger.js';
 import type { TeamEvent, ApiContext } from './executor.js';
+import type { EffortLevel } from '../types.js';
 import {
   PersistentClaudeExecutor,
   type PersistentExecutorOptions,
@@ -32,6 +33,8 @@ export interface RegistryOptions {
   idleTimeoutMs?: number;
   /** Default model for new executors. Per-acquire option overrides this. */
   defaultModel?: string;
+  /** Default reasoning effort for new executors. Per-acquire option overrides this. */
+  defaultEffort?: EffortLevel;
   /** Default API key for new executors. */
   defaultApiKey?: string;
 }
@@ -47,6 +50,8 @@ export interface AcquireOptions {
   onTeamEvent?: (event: TeamEvent) => void;
   /** Override per-acquire model (else uses registry default). */
   model?: string;
+  /** Override per-acquire reasoning effort (else uses registry default). */
+  effort?: EffortLevel;
   /** MetaBot bot/chat context baked into the executor's system prompt. */
   apiContext?: ApiContext;
   /** Stable per-chat outputs directory. */
@@ -133,6 +138,7 @@ export class ExecutorRegistry extends EventEmitter {
       resumeSessionId: opts.resumeSessionId,
       apiKey: this.opts.defaultApiKey,
       model: opts.model ?? this.opts.defaultModel,
+      effort: opts.effort ?? this.opts.defaultEffort,
       logger: this.opts.logger,
       idleTimeoutMs: this.opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
       onTeamEvent: opts.onTeamEvent,

@@ -270,7 +270,11 @@ export function buildCardV2(state: CardState): string {
     }
     if (state.status === 'complete' || state.status === 'error') {
       if (state.sessionCostUsd != null) parts.push(`$${state.sessionCostUsd.toFixed(2)}`);
-      if (state.model) parts.push(state.model.replace(/^claude-/, ''));
+      if (state.model) {
+        // Append reasoning effort right after the model (Claude only).
+        const modelLabel = state.model.replace(/^claude-/, '');
+        parts.push(state.effort ? `${modelLabel} · ${state.effort}` : modelLabel);
+      }
       if (state.durationMs !== undefined) parts.push(`${(state.durationMs / 1000).toFixed(1)}s`);
     }
     if (parts.length > 0) {

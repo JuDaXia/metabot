@@ -78,6 +78,8 @@ export interface CardState {
   pendingQuestion?: PendingQuestion;
   /** Primary model used (e.g. "claude-opus-4-7") */
   model?: string;
+  /** Effective reasoning effort for this turn (Claude only), shown next to the model. */
+  effort?: string;
   /** Total input+output tokens consumed */
   totalTokens?: number;
   /** Context window size of the primary model */
@@ -97,6 +99,10 @@ export interface IncomingMessage {
   chatId: string;
   chatType: string;
   userId: string;
+  /** Display name of the sender (resolved for group chats; undefined in 1:1 or
+   *  when it can't be resolved). Lets the bridge attribute group messages to who
+   *  actually sent them instead of assuming every message is from the same person. */
+  senderName?: string;
   text: string;
   imageKey?: string;
   fileKey?: string;
