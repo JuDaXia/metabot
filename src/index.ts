@@ -1,13 +1,10 @@
 import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { loadAppConfig, type BotConfig } from './config.js';
+import { loadAppConfig } from './config.js';
 import { createLogger, type Logger } from './utils/logger.js';
-import { createEventDispatcher } from './feishu/event-handler.js';
-import { MessageSender } from './feishu/message-sender.js';
-import { FeishuSenderAdapter } from './feishu/feishu-sender-adapter.js';
 import { MessageBridge } from './bridge/message-bridge.js';
-import type { IMessageSender } from './bridge/message-sender.interface.js';
 import type { BotConfigBase } from './config.js';
+import { startFeishuBot } from './feishu/feishu-bot-runner.js';
 import { startTelegramBot } from './telegram/telegram-bot.js';
 import { startWechatBot } from './wechat/wechat-bot.js';
 import { BotRegistry } from './api/bot-registry.js';
@@ -20,84 +17,6 @@ import { DocSync } from './sync/doc-sync.js';
 import { MemoryClient } from './memory/memory-client.js';
 
 import { SessionRegistry } from './session/session-registry.js';
-
-interface FeishuBotHandle {
-  name: string;
-  bridge: MessageBridge;
-  wsClient: lark.WSClient;
-  config: BotConfigBase;
-  sender: IMessageSender;
-  feishuClient: lark.Client;
-}
-
-async function startFeishuBot(botConfig: BotConfig, logger: Logger, memoryServerUrl: string, memorySecret?: string): Promise<FeishuBotHandle> {
-  const botLogger = logger.child({ bot: botConfig.name });
-
-  botLogger.info('Starting Feishu bot...');
-
-  // Create Feishu API client
-  const client = new lark.Client({
-    appId: botConfig.feishu.appId,
-    appSecret: botConfig.feishu.appSecret,
-    disableTokenCache: false,
-  });
-
-  // Fetch bot info to get bot's open_id for accurate @mention detection
-  let botOpenId: string | undefined;
-  try {
-    const botInfo: any = await client.request({ method: 'GET', url: '/open-apis/bot/v3/info' });
-    botOpenId = botInfo?.bot?.open_id;
-    if (botOpenId) {
-      botLogger.info({ botOpenId }, 'Bot info fetched');
-    } else {
-      botLogger.warn('Could not get bot open_id. Ensure the Feishu app has Bot capability enabled and the app version is published.');
-    }
-  } catch (err: any) {
-    botLogger.warn({ err: err?.message || err }, 'Failed to fetch bot info. Check: 1) Bot capability is enabled in Feishu app 2) App is published 3) App credentials are correct');
-  }
-
-  // Create sender and bridge (FeishuSenderAdapter wraps the Feishu-specific MessageSender)
-  const rawSender = new MessageSender(client, botLogger);
-  const sender = new FeishuSenderAdapter(rawSender);
-  const bridge = new MessageBridge(botConfig, botLogger, sender, memoryServerUrl, memorySecret);
-
-  // Create event dispatcher wired to the bridge
-  const dispatcher = createEventDispatcher(
-    botConfig,
-    botLogger,
-    (msg) => {
-      bridge.handleMessage(msg).catch((err) => {
-        botLogger.error({ err, msg }, 'Unhandled error in message bridge');
-      });
-    },
-    botOpenId,
-    rawSender,
-    (event) => {
-      bridge.handleCardAction(event).catch((err) => {
-        botLogger.error({ err, event }, 'Unhandled error in card action handler');
-      });
-    },
-  );
-
-  // Create WebSocket client
-  const wsClient = new lark.WSClient({
-    appId: botConfig.feishu.appId,
-    appSecret: botConfig.feishu.appSecret,
-    loggerLevel: lark.LoggerLevel.info,
-  });
-
-  // Start WebSocket connection with event dispatcher
-  await wsClient.start({ eventDispatcher: dispatcher });
-
-  botLogger.info('Feishu bot is running');
-  botLogger.info({
-    defaultWorkingDirectory: botConfig.claude.defaultWorkingDirectory,
-    maxTurns: botConfig.claude.maxTurns ?? 'unlimited',
-    maxBudgetUsd: botConfig.claude.maxBudgetUsd ?? 'unlimited',
-  }, 'Configuration');
-
-  return { name: botConfig.name, bridge, wsClient, config: botConfig, sender, feishuClient: client };
-}
 
 async function main() {
   const appConfig = loadAppConfig();

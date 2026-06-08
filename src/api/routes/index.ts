@@ -3,6 +3,7 @@ export { handleFileRoutes } from './file-routes.js';
 export { handleTeamRoutes } from './team-routes.js';
 export { handleTaskRoutes } from './task-routes.js';
 export { handleBotRoutes } from './bot-routes.js';
+export { handleFeishuOnboardRoutes } from './feishu-onboard-routes.js';
 export { handleSyncRoutes } from './sync-routes.js';
 export { handleRtcRoutes } from './rtc-routes.js';
 export { handleSessionRoutes } from './session-routes.js';
