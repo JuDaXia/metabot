@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
 import type { BotInfo } from '../types';
 import styles from './BotManageDialog.module.css';
@@ -7,6 +7,12 @@ interface BotManageDialogProps {
   mode: 'create' | 'edit';
   bot?: BotInfo;
   onClose: () => void;
+}
+
+interface ModelOption {
+  id: string;
+  label: string;
+  note: string;
 }
 
 export function BotManageDialog({ mode, bot, onClose }: BotManageDialogProps) {
@@ -22,6 +28,19 @@ export function BotManageDialog({ mode, bot, onClose }: BotManageDialogProps) {
   const [maxBudget, setMaxBudget] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [models, setModels] = useState<Record<string, ModelOption[]>>({});
+
+  // Fetch selectable model lists (Claude is live/dynamic) for the model autocomplete.
+  useEffect(() => {
+    fetch('/api/models', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setModels({ claude: d.claude || [], kimi: d.kimi || [], codex: d.codex || [] });
+      })
+      .catch(() => {});
+  }, [token]);
+
+  const modelOptions = models[engine] || [];
 
   const handleSubmit = useCallback(async () => {
     if (!name.trim() || !workDir.trim()) {
@@ -141,8 +160,14 @@ export function BotManageDialog({ mode, bot, onClose }: BotManageDialogProps) {
                 className={styles.input}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={engine === 'codex' ? 'gpt-5.4-codex' : engine === 'kimi' ? 'kimi-for-coding' : 'claude-opus-4-7'}
+                list="model-options"
+                placeholder={engine === 'codex' ? 'gpt-5.4-codex' : engine === 'kimi' ? 'kimi-for-coding' : 'claude-opus-4-8'}
               />
+              <datalist id="model-options">
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>{`${m.label} · ${m.note}`}</option>
+                ))}
+              </datalist>
             </label>
             <label className={styles.field}>
               <span className={styles.label}>Max Turns</span>

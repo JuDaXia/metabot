@@ -4,6 +4,7 @@ import type { IncomingMessage } from '../types.js';
 import type { IMessageSender } from './message-sender.interface.js';
 import { resolveEngineName, SessionManager } from '../engines/index.js';
 import type { EngineName } from '../engines/index.js';
+import { getModelsForEngine } from '../engines/model-catalog.js';
 import { MemoryClient } from '../memory/memory-client.js';
 import { AuditLogger } from '../utils/audit-logger.js';
 import type { DocSync } from '../sync/doc-sync.js';
@@ -335,25 +336,10 @@ export class CommandHandler {
     // List available models
     if (normalized === 'list' || normalized === 'ls') {
       const active = session.model || botDefault;
-      const claudeModels = [
-        { id: 'claude-opus-4-7', label: 'Opus 4.7', note: 'Most capable · 200k context' },
-        { id: 'claude-opus-4-7[1m]', label: 'Opus 4.7 (1M)', note: '1M context window' },
-        { id: 'claude-opus-4-6', label: 'Opus 4.6', note: '200k context' },
-        { id: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)', note: '1M context window' },
-        { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', note: 'Balanced · 200k context' },
-        { id: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 (1M)', note: '1M context window' },
-        { id: 'claude-haiku-4-5', label: 'Haiku 4.5', note: 'Fastest · 200k context' },
-      ];
-      const kimiModels = [
-        { id: 'kimi-for-coding', label: 'Kimi for Coding', note: 'Subscription default · 256k context · thinking' },
-        { id: 'kimi-k2', label: 'Kimi K2', note: 'Legacy coding model' },
-      ];
-      const codexModels = [
-        { id: 'gpt-5.4-codex', label: 'GPT-5.4 Codex', note: 'Recommended Codex coding model' },
-        { id: 'gpt-5.4', label: 'GPT-5.4', note: 'General flagship model' },
-        { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', note: 'Legacy Codex coding model' },
-      ];
-      const models = activeEngine === 'kimi' ? kimiModels : activeEngine === 'codex' ? codexModels : claudeModels;
+      // Claude models are fetched live from the Anthropic Models API when an API
+      // key is configured (cached 1h), with a maintained static fallback; Kimi and
+      // Codex are static. See engines/model-catalog.ts.
+      const { models, source } = await getModelsForEngine(activeEngine);
       const header = activeEngine === 'kimi'
         ? '**Available Kimi models:**'
         : activeEngine === 'codex'
@@ -373,7 +359,10 @@ export class CommandHandler {
       }
       lines.push('');
       if (activeEngine === 'claude') {
-        lines.push('_Tip: append `[1m]` to a model name to enable the 1M context window. Only Opus 4.7/4.6 and Sonnet 4.6 support it._');
+        lines.push('_Tip: append `[1m]` to a model name to enable the 1M context window (Opus 4.8/4.7/4.6 and Sonnet 4.6)._');
+        lines.push(source === 'live'
+          ? '_List fetched live from the Anthropic Models API._'
+          : '_Built-in list (set `ANTHROPIC_API_KEY` to fetch the live model list)._');
       } else if (activeEngine === 'codex') {
         lines.push('_Tip: leave unset to use the Codex CLI default from `~/.codex/config.toml`._');
       } else {
@@ -423,7 +412,7 @@ export class CommandHandler {
   private exampleModelsForEngine(engine: EngineName): string {
     switch (engine) {
       case 'claude':
-        return '`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`';
+        return '`claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`';
       case 'kimi':
         return '`kimi-for-coding`, `kimi-k2`';
       case 'codex':
