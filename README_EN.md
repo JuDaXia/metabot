@@ -449,6 +449,7 @@ MetaBot runs Claude Code in `bypassPermissions` mode — no interactive approval
 | `/status` | Session info (includes current model) |
 | `/goal <condition>` | Set a goal the agent keeps pursuing across turns. `/goal clear` to stop |
 | `/model` | Show current engine/model; `/model list` — available engines/models; `/model claude`, `/model kimi`, or `/model codex` — switch engine; `/model <name>` — set model; `/model reset` — restore default |
+| `/effort` | Show/set Claude reasoning effort: `/effort low\|medium\|high\|xhigh\|max` to set, `/effort reset` to clear (Claude only; higher = deeper thinking, model-gated levels auto-downgrade) |
 | `/memory list` | Browse knowledge tree |
 | `/memory search <query>` | Search knowledge base |
 | `/sync` | Sync MetaMemory to Feishu Wiki |

@@ -390,6 +390,17 @@ export class MessageBridge {
     };
   }
 
+  /**
+   * Effective reasoning-effort label shown next to the model on the card.
+   * Claude only: session override → bot config → "default" (model's own default).
+   * Returns undefined for non-Claude engines (effort doesn't apply).
+   */
+  private effortLabel(session: { engine?: EngineName; effort?: string }): string | undefined {
+    const engineName: EngineName = session.engine ?? resolveEngineName(this.config);
+    if (engineName !== 'claude') return undefined;
+    return session.effort ?? this.config.claude.effort ?? 'default';
+  }
+
   /** Inject the doc sync service for /sync commands. */
   setDocSync(docSync: DocSync): void {
     this.commandHandler.setDocSync(docSync);
@@ -515,6 +526,7 @@ export class MessageBridge {
         maxConcurrent,
         defaultApiKey: this.config.claude.apiKey,
         defaultModel: this.config.claude.model,
+        defaultEffort: this.config.claude.effort,
       });
       // Stage 3 — every newly added executor gets a spontaneous-activity
       // subscription so teammate / goal / background pings between turns
@@ -906,7 +918,7 @@ export class MessageBridge {
     }
 
     const displayPrompt = '(agent continuation: background task return)';
-    const processor = new StreamProcessor(displayPrompt);
+    const processor = new StreamProcessor(displayPrompt, this.effortLabel(this.sessionManager.getSession(chatId)));
     const rateLimiter = new RateLimiter(1500);
     const abortController = new AbortController();
     const session = this.sessionManager.getSession(chatId);
@@ -1102,6 +1114,9 @@ export class MessageBridge {
     },
   ): Promise<ExecutionHandle> {
     const session = this.sessionManager.getSession(chatId);
+    // /effort session override (undefined → executor falls back to bot config /
+    // CLAUDE_EFFORT, then the model's own default). Only meaningful for Claude.
+    const effort = engineName === 'claude' ? session.effort : undefined;
     // Persistent only applies to Claude. Options that need per-turn binding
     // (maxTurns / allowedTools) aren't plumbed through the persistent path yet,
     // so fall back to legacy spawn when they're present — matches the gating
@@ -1125,6 +1140,7 @@ export class MessageBridge {
         resumeSessionId: opts.freshSession ? undefined : session.sessionId,
         onTeamEvent: opts.onTeamEvent,
         model: opts.model,
+        effort,
         apiContext: opts.apiContext,
         outputsDir: opts.outputsDir,
       });
@@ -1141,6 +1157,7 @@ export class MessageBridge {
       outputsDir: opts.outputsDir,
       apiContext: opts.apiContext,
       model: opts.model,
+      effort,
       onTeamEvent: opts.onTeamEvent,
       maxTurns: opts.maxTurns,
       allowedTools: opts.allowedTools,
@@ -1675,7 +1692,8 @@ export class MessageBridge {
   }
 
   private async executeQuery(msg: IncomingMessage): Promise<void> {
-    const { userId, chatId, text, imageKey, fileKey, fileName, messageId: msgId } = msg;
+    const { userId, chatId, chatType, senderName, text, imageKey, fileKey, fileName, messageId: msgId } = msg;
+    const isGroup = chatType === 'group';
     const { session, engineName } = this.prepareSessionForExecution(chatId);
     const cwd = session.workingDirectory;
     const abortController = new AbortController();
@@ -1746,7 +1764,7 @@ export class MessageBridge {
     const displayPrompt = hasMedia && mediaCount > 1
       ? `🖼️ [${mediaCount} files] ${text}`
       : fileKey ? '📎 ' + text : imageKey ? '🖼️ ' + text : text;
-    const processor = new StreamProcessor(displayPrompt);
+    const processor = new StreamProcessor(displayPrompt, this.effortLabel(session));
     // Capture mirrored goal once at task start. New /goal messages can't
     // arrive mid-task (handleMessage rejects them with "Task In Progress"),
     // so this stays stable for the whole run.
@@ -1766,7 +1784,17 @@ export class MessageBridge {
       return;
     }
 
-    const apiContext = { botName: this.config.name, chatId };
+    const apiContext = { botName: this.config.name, chatId, isGroup };
+
+    // Group chats: tag the prompt with WHO sent it so Claude attributes the
+    // message to the actual sender instead of assuming it's the same person
+    // (the owner) every turn. Only the model-facing `prompt` is tagged — the
+    // user-facing card (`displayPrompt`) is left untouched. 1:1 chats are
+    // unchanged (the sender is always the same person there).
+    if (isGroup) {
+      const senderLabel = senderName || `成员 ${userId.slice(-6)}`;
+      prompt = `【群聊消息 · 发送者：${senderLabel}】\n${prompt}`;
+    }
 
     const rateLimiter = new RateLimiter(1500);
 
@@ -2225,7 +2253,7 @@ export class MessageBridge {
     const outputsDir = this.outputsManager.prepareDir(chatId);
 
     const displayPrompt = prompt;
-    const processor = new StreamProcessor(displayPrompt);
+    const processor = new StreamProcessor(displayPrompt, this.effortLabel(session));
     const rateLimiter = new RateLimiter(1500);
     const activeGoal = session.activeGoal;
 

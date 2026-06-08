@@ -282,7 +282,16 @@ export function createEventDispatcher(
           }
         }
 
-        onMessage({ messageId, chatId, chatType, userId, text, imageKey, fileKey, fileName, extraMedia });
+        // In group chats, resolve the sender's display name so the bridge can
+        // tell Claude WHO sent the message — otherwise every group message looks
+        // like it came from the same person (the owner). Best-effort + cached;
+        // undefined falls back to a short id downstream.
+        let senderName: string | undefined;
+        if (chatType === 'group' && messageSender) {
+          senderName = await messageSender.getUserName(chatId, userId);
+        }
+
+        onMessage({ messageId, chatId, chatType, userId, senderName, text, imageKey, fileKey, fileName, extraMedia });
       } catch (err) {
         logger.error({ err }, 'Error handling message event');
       }

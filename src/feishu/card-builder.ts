@@ -198,7 +198,9 @@ export function buildCard(state: CardState): string {
       if (state.model) {
         // Strip the claude- prefix (claude-opus-4-7 → opus-4-7) but keep the
         // full Kimi model name since e.g. `for-coding` loses too much context.
-        parts.push(state.model.replace(/^claude-/, ''));
+        // Append the reasoning effort right after the model (Claude only).
+        const modelLabel = state.model.replace(/^claude-/, '');
+        parts.push(state.effort ? `${modelLabel} · ${state.effort}` : modelLabel);
       }
       if (state.durationMs !== undefined) {
         parts.push(`${(state.durationMs / 1000).toFixed(1)}s`);

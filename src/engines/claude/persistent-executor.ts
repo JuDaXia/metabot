@@ -35,6 +35,7 @@ import type { SDKUserMessage, SpawnOptions, SpawnedProcess, Query } from '@anthr
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
 import type { SDKMessage, TeamEvent, ApiContext } from './executor.js';
+import type { EffortLevel } from '../types.js';
 import { apply1MContextSettings } from './executor.js';
 import { makeCanUseTool } from './exit-plan-mode.js';
 
@@ -128,6 +129,8 @@ export interface PersistentExecutorOptions {
   /** Optional explicit API key, otherwise OAuth credentials file is used. */
   apiKey?: string;
   model?: string;
+  /** Reasoning effort baked in for this executor's lifetime (rebinds on a fresh executor). */
+  effort?: EffortLevel;
   logger: Logger;
   /**
    * MetaBot bot/chat context. Stable for the lifetime of the executor
@@ -357,6 +360,7 @@ export class PersistentClaudeExecutor extends EventEmitter {
       agentProgressSummaries: true,
     };
     if (this.options.model) queryOptions.model = this.options.model;
+    if (this.options.effort) queryOptions.effort = this.options.effort;
     // resume: prefer the most-recent observed sessionId; fall back to the
     // one supplied at construction. This way, a restart picks up the live
     // session even if the SDK forked sessionId mid-life.
@@ -377,6 +381,14 @@ export class PersistentClaudeExecutor extends EventEmitter {
       appendSections.push(
         `## MetaBot API\nYou are running as bot "${ctx.botName}" in chat "${ctx.chatId}".\nUse the /metabot skill for full API documentation (agent bus, scheduling, bot management).`,
       );
+      if (ctx.isGroup) {
+        appendSections.push(
+          [
+            '## Group Chat — Message Attribution',
+            'This is a GROUP chat with multiple people. Each incoming user message is prefixed with its sender, e.g. `【群聊消息 · 发送者：<name>】`. Treat different senders as DIFFERENT people: attribute each message to whoever sent it, and do NOT assume every message comes from the same person (such as the owner). The prefix is context metadata — do not echo it back in your replies.',
+          ].join('\n'),
+        );
+      }
       if (ctx.groupMembers && ctx.groupMembers.length > 0) {
         const others = ctx.groupMembers.filter((m) => m !== ctx.botName);
         if (ctx.groupId) {

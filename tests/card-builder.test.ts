@@ -73,6 +73,33 @@ describe('buildCard', () => {
     expect(note.elements[0].content).toContain('5.0s');
   });
 
+  it('shows reasoning effort next to the model in the footer', () => {
+    const state: CardState = {
+      status: 'complete',
+      userPrompt: 'task',
+      responseText: 'done',
+      toolCalls: [],
+      model: 'claude-opus-4-8[1m]',
+      effort: 'high',
+      durationMs: 1000,
+    };
+    const note = JSON.parse(buildCard(state)).elements.find((e: any) => e.tag === 'note');
+    expect(note.elements[0].content).toContain('opus-4-8[1m] · high');
+  });
+
+  it('shows the model alone when no effort is set', () => {
+    const state: CardState = {
+      status: 'complete',
+      userPrompt: 'task',
+      responseText: 'done',
+      toolCalls: [],
+      model: 'claude-sonnet-4-6',
+    };
+    const note = JSON.parse(buildCard(state)).elements.find((e: any) => e.tag === 'note');
+    expect(note.elements[0].content).toContain('sonnet-4-6');
+    expect(note.elements[0].content).not.toContain('·');
+  });
+
   // Cards from flushSpontaneous (between-turn agent activity) are sent with
   // the `agent_activity` status so users can see at a glance that the card
   // isn't a normal user-turn reply. Blue header, distinct title — the body

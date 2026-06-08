@@ -42,7 +42,11 @@ export class StreamProcessor {
   // Live background tasks (Monitor, etc.) — task_id → latest rollup.
   private _backgroundEvents: Map<string, BackgroundEvent> = new Map();
 
-  constructor(private userPrompt: string) {}
+  constructor(
+    private userPrompt: string,
+    /** Effective reasoning effort label to surface on the card (Claude only). */
+    private readonly effortLabel?: string,
+  ) {}
 
   processMessage(message: SDKMessage): CardState {
     // Capture session_id from any message
@@ -92,6 +96,7 @@ export class StreamProcessor {
       costUsd: this.costUsd,
       durationMs: this.durationMs,
       model: this._model,
+      effort: this.effortLabel,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
       pendingQuestion: this._pendingQuestions[0] || undefined,
@@ -289,6 +294,7 @@ export class StreamProcessor {
         ? (message.errors?.join('; ') || `Ended with: ${message.subtype}`)
         : isApiError ? resultText : undefined,
       model: this._model,
+      effort: this.effortLabel,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
       backgroundEvents: this._backgroundEvents.size > 0
@@ -388,6 +394,7 @@ export class StreamProcessor {
       costUsd: this.costUsd,
       durationMs: this.durationMs,
       model: this._model,
+      effort: this.effortLabel,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
       pendingQuestion: this._pendingQuestions[0] || undefined,

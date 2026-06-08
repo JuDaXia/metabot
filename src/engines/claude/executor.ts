@@ -5,6 +5,7 @@ import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import type { BotConfigBase } from '../../config.js';
+import type { EffortLevel } from '../types.js';
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
 import { makeCanUseTool } from './exit-plan-mode.js';
@@ -159,6 +160,9 @@ function createSpawnFn(explicitApiKey?: string): (options: SpawnOptions) => Spaw
 export interface ApiContext {
   botName: string;
   chatId: string;
+  /** True when this chat is a multi-person group. Drives the system-prompt note
+   *  that tells Claude group messages are sender-tagged (attribute by sender). */
+  isGroup?: boolean;
   /** Group chat member names — enables inter-bot communication prompt. */
   groupMembers?: string[];
   /** Group ID — used to build grouptalk chatIds for inter-bot communication. */
@@ -232,6 +236,8 @@ export interface ExecutorOptions {
   maxTurns?: number;
   /** Override model for this execution (e.g. faster model for voice calls). */
   model?: string;
+  /** Override reasoning effort for this execution (session override beats bot config). */
+  effort?: EffortLevel;
   /** Override allowed tools for this execution (empty array = no tools). */
   allowedTools?: string[];
   /** Called whenever Claude Code fires a team coordination hook. */
@@ -356,6 +362,17 @@ export class ClaudeExecutor {
         ].join('\n')
       );
 
+      // Group chat — tell Claude that messages are sender-tagged so it attributes
+      // each one to the actual sender instead of assuming a single (owner) speaker.
+      if (apiContext.isGroup) {
+        appendSections.push(
+          [
+            '## Group Chat — Message Attribution',
+            'This is a GROUP chat with multiple people. Each incoming user message is prefixed with its sender, e.g. `【群聊消息 · 发送者：<name>】`. Treat different senders as DIFFERENT people: attribute each message to whoever sent it, and do NOT assume every message comes from the same person (such as the owner). The prefix is context metadata — do not echo it back in your replies.',
+          ].join('\n'),
+        );
+      }
+
       // Group chat — tell the bot who else is in the group and how to talk to them
       if (apiContext.groupMembers && apiContext.groupMembers.length > 0) {
         const others = apiContext.groupMembers.filter((m) => m !== apiContext.botName);
@@ -392,6 +409,13 @@ export class ClaudeExecutor {
       queryOptions.model = this.config.claude.model;
     }
 
+    // Bot-level reasoning effort baseline (CLAUDE_EFFORT / bots.json claude.effort).
+    // A per-execution override (options.effort, carrying the /effort session value)
+    // is applied on top in startExecution()/execute().
+    if (this.config.claude.effort) {
+      queryOptions.effort = this.config.claude.effort;
+    }
+
     if (sessionId) {
       queryOptions.resume = sessionId;
     }
@@ -424,6 +448,9 @@ export class ClaudeExecutor {
     }
     if (options.model) {
       queryOptions.model = options.model;
+    }
+    if (options.effort) {
+      queryOptions.effort = options.effort;
     }
     if (options.allowedTools !== undefined) {
       queryOptions.allowedTools = options.allowedTools;
